@@ -2,21 +2,19 @@ import Html exposing (Html, button, div, text)
 import Html.Events exposing (onClick, on)
 import Html.Attributes exposing (style)
 import Time exposing (Time, millisecond)
+import AnimationFrame exposing (diffs)
 import Json.Decode as Json
 
 main : Program Never State Msg
 main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
 -- Start time of 0 means the first time-delta will be a whopper. Make sure nothing's delta-dependent on the first step.
-init = State (Character 40 100 200 300 Still (0.2 / millisecond)) (Playfield 800 400 100 100) 0
+init = State (Character 40 100 200 300 Still (0.2 / millisecond)) (Playfield 800 400 100 100)
 
--- "Note: this function is not for animation!"
--- Okay, will have to revisit animation...
-subscriptions model = Time.every (50 * millisecond) Tick
+subscriptions model = diffs Tick
 
 type alias State = { character : Character
                    , playfield : Playfield
-                   , lastTime : Time
                    }
 
 -- A character. Its position is assumed to be at the bottom left of its graphic
@@ -41,10 +39,9 @@ type Msg = Tick Time | Click Int Int
 
 update msg model =
     case msg of
-        Tick t ->
-            let (newTime, delta) = (t, t - model.lastTime) in
-            (State (walk model.character delta) model.playfield newTime, Cmd.none)
-        Click x y -> (State (startWalking model.character (toFloat x) (toFloat y)) model.playfield model.lastTime, Cmd.none)
+        Tick delta ->
+            (State (walk model.character delta) model.playfield, Cmd.none)
+        Click x y -> (State (startWalking model.character (toFloat x) (toFloat y)) model.playfield, Cmd.none)
 
 directionFrom (x1, y1) (x2, y2) = let dx = x2 - x1
                                       dy = y2 - y1
