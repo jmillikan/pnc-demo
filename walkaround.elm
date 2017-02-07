@@ -1,6 +1,6 @@
-import Html exposing (Html, button, div, text)
+import Html exposing (Html, button, div, img, text)
 import Html.Events exposing (onClick, on)
-import Html.Attributes exposing (style)
+import Html.Attributes exposing (style, src)
 import Time exposing (Time, millisecond)
 import AnimationFrame exposing (diffs)
 import Json.Decode as Json
@@ -10,10 +10,20 @@ main = Html.program { init = (init, Cmd.none), view = view, update = update, sub
 
 -- Start time of 0 means the first time-delta will be a whopper. Make sure nothing's delta-dependent on the first step.
 init : State
-init = State (Character 40 100 (Pos 200 300) Still (0.2 / millisecond)) [Playfield 800 400 100 100, Playfield 600 100 800 350]
+init = State initChar demoScene
 
+initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
+
+-- demoScene isn't as exciting as it sounds.
+demoScene : List Playfield
+demoScene = [Playfield 800 400 100 100, Playfield 600 100 800 350, Playfield 300 100 -100 300]
+
+-- Much later we might need ticks always or more of the time...
+-- For now I just don't want the extra history in reactor
 subscriptions : State -> Sub Msg
-subscriptions model = diffs Tick
+subscriptions model = case model.character.state of
+                          Still -> Sub.none
+                          MovingTo _ _ -> diffs Tick
 
 type alias State = { character : Character
                    , playfield : List Playfield
@@ -28,13 +38,23 @@ type alias Character = { width : Float
                        , pos : Pos
                        , state : CharState
                        , speed : Float -- pixels/Time in ms?
+                       , facing : Facing -- This is separate from walkCycle for now...
+                       , walkCycle : List (String, Time)
                        }
 
+type Facing = Left | Right    
+
 -- MovingTo - multi-segment movement plan
--- TODO: Walking animation...
-type CharState = Still | MovingTo (List Pos)
+type CharState = Still | MovingTo (List Pos) AnimCycle
+
+-- Very simple animation system
+-- Or it was supposed to be...
+type alias AnimCycle = { segments : List (String, Time)
+                       , current : List (String, Time)
+                       }
 
 -- Playfield segment rectangle
+-- Needs to be called something else...
 type alias Playfield = { width : Float
                        , height : Float
                        , x : Float
@@ -45,11 +65,17 @@ type Msg = Tick Time | Click Int Int
 
 update : Msg -> State -> ( State, Cmd Msg )    
 update msg model =
+    let char = model.character in
     case msg of
         Tick delta ->
-            (State (walk model.character delta) model.playfield, Cmd.none)
-        --Click x y -> (State (startWalking model.character (Pos (toFloat x) (toFloat y))) model.playfield, Cmd.none)
-        Click x y -> (State (walkOneX model.character model.playfield (Pos (toFloat x) (toFloat y))) model.playfield, Cmd.none)
+            (State (walk char delta) model.playfield, Cmd.none)
+        Click x y ->
+            let newState = 
+                    case walkOneX char.pos model.playfield (Pos (toFloat x) (toFloat y))
+                    of
+                        Nothing -> Still
+                        Just ps -> MovingTo ps (AnimCycle char.walkCycle char.walkCycle)
+            in (State { char | state = newState } model.playfield, Cmd.none)
 
 -- Pos isn't a great representation for a direction, oh well
 directionFrom : Pos -> Pos -> Pos
@@ -67,42 +93,56 @@ walk char delta =
     case char.state of
         Still -> char
         -- No more movement to do, hold still
-        MovingTo [] -> { char | state = Still }
+        MovingTo [] _ -> { char | state = Still }
         -- Move toward dest at char.speed
-        MovingTo (dest :: rest) ->
+        MovingTo (dest :: rest) anim ->
             -- Do some fairly bad math to move (delta * char.speed) towards destination
             let maxDistance = delta * char.speed
-                distance = distanceFrom char.pos dest in
+                distance = distanceFrom char.pos dest
+                newFacing = if dest.x > char.pos.x then Right else Left
+            in
             if maxDistance > distance
-            then walk { char | pos = Pos dest.x dest.y, state = MovingTo rest } delta -- Give away some movement here instead of bothering to chop up delta
+            then walk { char | pos = Pos dest.x dest.y
+                      , state = MovingTo rest (advanceAnim anim delta)
+                      , facing = newFacing } delta -- Give away some movement here instead of bothering to chop up delta
             else
                 let dir = directionFrom char.pos dest
-                in { char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y) }
+                in { char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
+                   , state = MovingTo (dest :: rest) (advanceAnim anim delta)
+                   , facing = newFacing
+                   }
+
+                    -- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
+advanceAnim : AnimCycle -> Time -> AnimCycle
+advanceAnim a delta =
+    case Debug.log "current" a.current of
+        [] -> advanceAnim (AnimCycle a.segments a.segments) delta
+        (pose, remaining) :: rest ->
+            if remaining > delta
+            then (AnimCycle a.segments ((pose, remaining - delta) :: rest))
+            else advanceAnim (AnimCycle a.segments rest) (delta - remaining)
 
 -- Plan a move to (x, y) through playfield graph.
-startWalking : Character -> Pos -> Character                    
-startWalking char p = { char | state = MovingTo [p] }
+--startWalking : Character -> Pos -> Character                    
+--startWalking char p = { char | state = MovingTo [p] (AnimCycle char.walkCycle char.walkCycle) }
 
 -- First attempt at 'pathfinding' - keep just the field list, route through max of one "intersection" by force
 -- Next attempt should use BFS...
-walkOneX : Character -> List Playfield -> Pos -> Character
-walkOneX char playfields p =
-    let srcPlayfield = findPlayfield playfields char.pos
+walkOneX : Pos -> List Playfield -> Pos -> Maybe (List Pos)
+walkOneX sourceP playfields p =
+    let srcPlayfield = findPlayfield playfields sourceP
         -- Really we could get dest through click events but that's no fun
         destPlayfield = findPlayfield playfields p in
     case (srcPlayfield, destPlayfield, srcPlayfield == destPlayfield) of
-        (Just src, Just dest, True) -> { char | state = MovingTo [p] }
+        (Just src, Just dest, True) -> Just [p]
         (Just src, Just dest, False) ->
             case middleOfX src dest of
-                Just firstX -> { char | state = MovingTo [firstX, p] }
-                _ -> Debug.log "No middleOfX for " char
-        _ -> Debug.log "No src or no dest for " char
+                Just firstX -> Just [firstX, p]
+                _ -> Debug.log "No middleOfX" Nothing
+        _ -> Debug.log "No src or no dest" Nothing
                      
 findPlayfield : List Playfield -> Pos -> Maybe Playfield
-findPlayfield fields pos =
-    case List.filter (pointInPlayfield pos) fields of
-        [] -> Nothing
-        f :: _ -> Just f
+findPlayfield fields pos = List.head <| List.filter (pointInPlayfield pos) fields
 
 pointInPlayfield : Pos -> Playfield -> Bool
 pointInPlayfield p field =
@@ -136,6 +176,10 @@ view model =
   div [ on "click" offsetPosition ]
       [ div [] (List.map viewField model.playfield) -- One hardcoded area to walk in...
       , viewChar <| model.character
+--      , img [src "img/1left.png"] [text "1 left"]
+--      , img [src "img/2left.png"] [text "2 left"]
+--      , img [src "img/1right.png"] [text "1 right"]
+--      , img [src "img/2right.png"] [text "2 right"]
       ]
 
 -- https://github.com/fredcy/elm-svg-mouse-offset/blob/master/Main.elm    
@@ -143,13 +187,25 @@ offsetPosition : Json.Decoder Msg
 offsetPosition = Json.map2 Click (Json.field "pageX" Json.int) (Json.field "pageY" Json.int)
 
 viewChar : Character -> Html Msg
-viewChar c = div [ style [ ("background-color", "red")
-                         , ("height", toString c.height ++ "px")
+viewChar c = div [ style [ ("height", toString c.height ++ "px")
                          , ("width", toString c.width ++ "px")
                          , ("position", "absolute")
                          , ("top", toString (c.pos.y - c.height) ++ "px")
                          , ("left", toString c.pos.x ++ "px")
-                         ] ] [ text "guy" ]
+                         ] ] [ img [src ("img/" ++ pose c ++ face c ++ ".png"), style [ ("width", toString c.width ++ "px" ) ] ] [text "1 left"] ]
+
+pose : Character -> String
+pose c = case c.state of
+             Still -> "s"
+             MovingTo _ a ->
+                 case a.current of
+                     (p, _) :: _ -> p
+                     _ -> "1"
+                               
+face : Character -> String
+face c = case c.facing of
+             Left -> "left"
+             Right -> "right"
 
 viewField : Playfield -> Html Msg             
 viewField f = div [ style [ ("background-color", "green")
@@ -159,3 +215,4 @@ viewField f = div [ style [ ("background-color", "green")
                          , ("top", toString f.y ++ "px")
                          , ("left", toString f.x ++ "px")
                          ] ] [ text "field" ]
+
