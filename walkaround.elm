@@ -12,11 +12,12 @@ main = Html.program { init = (init, Cmd.none), view = view, update = update, sub
 init : State
 init = State initChar demoScene
 
+initChar : Character
 initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
 
 -- demoScene isn't as exciting as it sounds.
 demoScene : List Playfield
-demoScene = [Playfield 800 400 100 100, Playfield 600 100 800 350, Playfield 300 100 -100 300]
+demoScene = [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 300 100 -100 280]
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -112,7 +113,7 @@ walk char delta =
                    , facing = newFacing
                    }
 
-                    -- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
+-- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
 advanceAnim : AnimCycle -> Time -> AnimCycle
 advanceAnim a delta =
     case Debug.log "current" a.current of
@@ -173,13 +174,14 @@ middleOfX f1 f2 =
 -- Render everything with plain absolute divs for now.
 view : State -> Html Msg
 view model =
-  div [ on "click" offsetPosition ]
-      [ div [] (List.map viewField model.playfield) -- One hardcoded area to walk in...
-      , viewChar <| model.character
---      , img [src "img/1left.png"] [text "1 left"]
---      , img [src "img/2left.png"] [text "2 left"]
---      , img [src "img/1right.png"] [text "1 right"]
---      , img [src "img/2right.png"] [text "2 right"]
+  div [ on "click" offsetPosition
+      , style [ ("background-image", "url(img/bg1.png)")
+              , ("width", "1666px")
+              , ("height", "724px")
+              ]
+      ]
+      [ viewChar <| model.character
+      -- , div [] (List.map viewDebugField model.playfield) -- One hardcoded area to walk in...
       ]
 
 -- https://github.com/fredcy/elm-svg-mouse-offset/blob/master/Main.elm    
@@ -190,9 +192,9 @@ viewChar : Character -> Html Msg
 viewChar c = div [ style [ ("height", toString c.height ++ "px")
                          , ("width", toString c.width ++ "px")
                          , ("position", "absolute")
-                         , ("top", toString (c.pos.y - c.height) ++ "px")
-                         , ("left", toString c.pos.x ++ "px")
-                         ] ] [ img [src ("img/" ++ pose c ++ face c ++ ".png"), style [ ("width", toString c.width ++ "px" ) ] ] [text "1 left"] ]
+                         , ("top", toString (c.pos.y - c.height + 20) ++ "px") -- fudge fudge
+                         , ("left", toString (c.pos.x - c.width / 2) ++ "px")
+                         ] ] [ img [src ("img/" ++ pose c ++ face c ++ ".png"), style [ ("width", toString c.width ++ "px" ) ] ] [] ]
 
 pose : Character -> String
 pose c = case c.state of
@@ -207,12 +209,11 @@ face c = case c.facing of
              Left -> "left"
              Right -> "right"
 
-viewField : Playfield -> Html Msg             
-viewField f = div [ style [ ("background-color", "green")
-                         , ("height", toString f.height ++ "px")
-                         , ("width", toString f.width ++ "px")
-                         , ("position", "absolute")
-                         , ("top", toString f.y ++ "px")
-                         , ("left", toString f.x ++ "px")
-                         ] ] [ text "field" ]
-
+viewDebugField : Playfield -> Html Msg             
+viewDebugField f = div [ style [ ("background-color", "green")
+                               , ("height", toString f.height ++ "px")
+                               , ("width", toString f.width ++ "px")
+                               , ("position", "absolute")
+                               , ("top", toString f.y ++ "px")
+                               , ("left", toString f.x ++ "px")
+                               ] ] [ text "field" ]
