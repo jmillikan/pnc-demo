@@ -4,30 +4,34 @@ import Html.Attributes exposing (style, src)
 import Time exposing (Time, millisecond)
 import AnimationFrame exposing (diffs)
 import Json.Decode as Json
+import Keyboard exposing (KeyCode, presses)
+import Char exposing (toCode)
 
 main : Program Never State Msg
 main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
--- Start time of 0 means the first time-delta will be a whopper. Make sure nothing's delta-dependent on the first step.
 init : State
-init = State initChar demoScene
+init = State initChar demoScene False
 
 initChar : Character
 initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
 
 -- demoScene isn't as exciting as it sounds.
 demoScene : List Playfield
-demoScene = [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 300 100 -100 280]
+demoScene = [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
 subscriptions : State -> Sub Msg
-subscriptions model = case model.character.state of
-                          Still -> Sub.none
-                          MovingTo _ _ -> diffs Tick
+subscriptions model = Sub.batch [ presses Key
+                                , case model.character.state of
+                                      Still -> Sub.none
+                                      MovingTo _ _ -> diffs Tick
+                                ]
 
 type alias State = { character : Character
                    , playfield : List Playfield
+                   , debug : Bool
                    }
 
 -- Positions and units are screen pixels
@@ -62,21 +66,22 @@ type alias Playfield = { width : Float
                        , y : Float
                        }
 
-type Msg = Tick Time | Click Int Int
+type Msg = Tick Time | Click Int Int | Key KeyCode
 
 update : Msg -> State -> ( State, Cmd Msg )    
 update msg model =
     let char = model.character in
     case msg of
+        Key p -> (if p == toCode 'd' then { model | debug = not model.debug } else model, Cmd.none)
         Tick delta ->
-            (State (walk char delta) model.playfield, Cmd.none)
+            ({ model | character = walk char delta }, Cmd.none)
         Click x y ->
             let newState = 
                     case walkOneX char.pos model.playfield (Pos (toFloat x) (toFloat y))
                     of
                         Nothing -> Still
                         Just ps -> MovingTo ps (AnimCycle char.walkCycle char.walkCycle)
-            in (State { char | state = newState } model.playfield, Cmd.none)
+            in ({ model | character = { char | state = newState } }, Cmd.none)
 
 -- Pos isn't a great representation for a direction, oh well
 directionFrom : Pos -> Pos -> Pos
@@ -128,7 +133,7 @@ advanceAnim a delta =
 --startWalking char p = { char | state = MovingTo [p] (AnimCycle char.walkCycle char.walkCycle) }
 
 -- First attempt at 'pathfinding' - keep just the field list, route through max of one "intersection" by force
--- Next attempt should use BFS...
+-- Next attempt should use BFS^wtree-spanning
 walkOneX : Pos -> List Playfield -> Pos -> Maybe (List Pos)
 walkOneX sourceP playfields p =
     let srcPlayfield = findPlayfield playfields sourceP
@@ -139,8 +144,8 @@ walkOneX sourceP playfields p =
         (Just src, Just dest, False) ->
             case middleOfX src dest of
                 Just firstX -> Just [firstX, p]
-                _ -> Debug.log "No middleOfX" Nothing
-        _ -> Debug.log "No src or no dest" Nothing
+                _ -> Debug.log "No middleOfX" Nothing -- We'll be getting this until I fix routing
+        _ -> Debug.log "No src or no dest" Nothing -- When a click or the character is outside any known field...
                      
 findPlayfield : List Playfield -> Pos -> Maybe Playfield
 findPlayfield fields pos = List.head <| List.filter (pointInPlayfield pos) fields
@@ -159,19 +164,19 @@ middleOfX f1 f2 =
         f1bottom = f1.y + f1.height
         f2right = f2.x + f2.width
         f2bottom = f2.y + f2.height 
-    in
-        let l = max f1.x f2.x
-            r = min f1right f2right
-            t = max f1.y f2.y
-            b = min f1bottom f2bottom
-        in
-            if l <= r && t <= b
-            then
-                Just <| Pos ((l + r) / 2) ((t + b) / 2)
-            else
-                Nothing
+    in let l = max f1.x f2.x
+           r = min f1right f2right
+           t = max f1.y f2.y
+           b = min f1bottom f2bottom
+       in
+           if l <= r && t <= b
+           then Just <| Pos ((l + r) / 2) ((t + b) / 2)
+           else Nothing
 
--- Render everything with plain absolute divs for now.
+-- Render a background image and character
+-- Optionally render some debug geometry...
+-- For now the scene is fixed... Someday, scale it along with click events to accomodate
+-- the poor, miserable wretches who don't have my specific laptop
 view : State -> Html Msg
 view model =
   div [ on "click" offsetPosition
@@ -180,8 +185,9 @@ view model =
               , ("height", "724px")
               ]
       ]
-      [ viewChar <| model.character
-      -- , div [] (List.map viewDebugField model.playfield) -- One hardcoded area to walk in...
+      [ div [] (if model.debug then (List.map viewDebugField model.playfield) else [])
+      , viewChar model.character 
+      , div [] (if model.debug then [viewDebugChar model.character] else [])
       ]
 
 -- https://github.com/fredcy/elm-svg-mouse-offset/blob/master/Main.elm    
@@ -196,6 +202,7 @@ viewChar c = div [ style [ ("height", toString c.height ++ "px")
                          , ("left", toString (c.pos.x - c.width / 2) ++ "px")
                          ] ] [ img [src ("img/" ++ pose c ++ face c ++ ".png"), style [ ("width", toString c.width ++ "px" ) ] ] [] ]
 
+
 pose : Character -> String
 pose c = case c.state of
              Still -> "s"
@@ -209,6 +216,16 @@ face c = case c.facing of
              Left -> "left"
              Right -> "right"
 
+viewDebugChar : Character -> Html Msg
+viewDebugChar c = div
+                  [ style [ ("position", "absolute")
+                          , ("top", toString c.pos.y ++ "px") -- fudge fudge
+                          , ("left", toString c.pos.x ++ "px")
+                          , ("border", "solid red")
+                          , ("border-width", "2px 0px 0px 2px")
+                          ] ]
+                  [ text "C" ]
+             
 viewDebugField : Playfield -> Html Msg             
 viewDebugField f = div [ style [ ("background-color", "green")
                                , ("height", toString f.height ++ "px")
