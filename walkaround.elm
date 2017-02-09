@@ -23,14 +23,14 @@ demoScene = Scene
             "bg1"
             [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
             [Pos 1100 400] 
-            [Exit (Playfield 100 300 1090 150) (Pos 1140 400) 1 0]
+            [Exit (Playfield 100 300 1250 150) (Pos 1140 400) 1 0 "e-resize"]
 
 scene2 : Scene
 scene2 = Scene
          "bg2"
          [Playfield 200 100 0 150, Playfield 800 500 130 100]
          [Pos 50 200]
-         [Exit (Playfield 70 200 0 50) (Pos 50 200) 0 0]
+         [Exit (Playfield 70 200 0 50) (Pos 50 200) 0 0 "w-resize"]
 
 scenes : List Scene
 scenes = [demoScene, scene2]
@@ -77,6 +77,8 @@ type alias InAnimation = { segments : AnimCycle
                          , current : AnimCycle
                          }
 
+type alias Cursor = String    
+
 type alias Scene = { image : String
                    , playfields : List Playfield
                    , entrance : List Pos
@@ -95,6 +97,7 @@ type alias Exit = { field : Playfield
                   , position : Pos
                   , destination : Int
                   , destinationSpawn : Int
+                  , cursor : String -- hack hack hack
                   }
 
 type Msg = Tick Time | FloorClick Int Int | ExitClick Int Int | Key KeyCode
@@ -242,8 +245,8 @@ middleOfX f1 f2 =
 view : State -> Html Msg
 view model =
   div [ style [ ("background-image", "url(img/" ++ model.scene.image ++ ".png)")
-              , ("width", "1666px")
-              , ("height", "724px")
+              , ("width", "1400px")
+              , ("height", "700px")
               ]
       ]
       [ div [] (if model.debug then (List.map (viewDebugField "blue") model.scene.playfields)
@@ -252,8 +255,8 @@ view model =
       , viewChar model.character 
       , div [] (if model.debug then [viewDebugPos "C" model.character.pos] else [])
       -- These need to be "on top". This is not really a good solution.
-      , div [] (List.map (clickField identity (always FloorClick)) model.scene.playfields)
-      , div [] (List.map (clickField (.field) (always ExitClick)) model.scene.exits)
+      , div [] (List.map (clickField identity (always FloorClick) (always "move")) model.scene.playfields)
+      , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) model.scene.exits)
       ]
 
 selfish : Options
@@ -264,14 +267,15 @@ offsetPosition : (Int -> Int -> Msg) -> Json.Decoder Msg
 offsetPosition msg = Json.map2 msg (Json.field "pageX" Json.int) (Json.field "pageY" Json.int)
 
 -- A lot of overlap with viewDebugField...                     
-clickField : (a -> Playfield) -> (a -> Int -> Int -> Msg) -> a -> Html Msg
-clickField f m e = div [ style [ ("height", toString (f e).height ++ "px")
-                          , ("width", toString (f e).width ++ "px")
-                          , ("position", "absolute")
-                          , ("top", toString (f e).y ++ "px") -- fudge fudge
-                          , ("left", toString (f e).x ++ "px")
-                          ]
-                  , onWithOptions "click" selfish (offsetPosition (m e)) ] [ ]
+clickField : (a -> Playfield) -> (a -> Int -> Int -> Msg) -> (a -> Cursor) -> a -> Html Msg
+clickField f m cur e = div [ style [ ("height", toString (f e).height ++ "px")
+                                   , ("width", toString (f e).width ++ "px")
+                                   , ("position", "absolute")
+                                   , ("top", toString (f e).y ++ "px") -- fudge fudge
+                                   , ("left", toString (f e).x ++ "px")
+                                   , ("cursor", cur e)
+                                   ]
+                           , onWithOptions "click" selfish (offsetPosition (m e)) ] [ ]
 
 viewChar : Character -> Html Msg
 viewChar c = div [ style [ ("height", toString c.height ++ "px")
