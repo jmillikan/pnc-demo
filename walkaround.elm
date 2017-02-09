@@ -17,8 +17,8 @@ initChar : Character
 initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
 
 -- demoScene isn't as exciting as it sounds.
-demoScene : List Playfield
-demoScene = [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
+demoScene : Scene
+demoScene = Scene "bg1" [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -30,7 +30,7 @@ subscriptions model = Sub.batch [ presses Key
                                 ]
 
 type alias State = { character : Character
-                   , playfield : List Playfield
+                   , scene : Scene
                    , debug : Bool
                    }
 
@@ -58,6 +58,10 @@ type alias AnimCycle = { segments : List (String, Time)
                        , current : List (String, Time)
                        }
 
+type alias Scene = { image : String
+                   , playfields : List Playfield
+                   }
+
 -- Playfield segment rectangle
 -- Needs to be called something else...
 type alias Playfield = { width : Float
@@ -77,7 +81,7 @@ update msg model =
             ({ model | character = walk char delta }, Cmd.none)
         Click x y ->
             let newState = 
-                    case walkOneX char.pos model.playfield (Pos (toFloat x) (toFloat y))
+                    case walkOneX char.pos model.scene.playfields (Pos (toFloat x) (toFloat y))
                     of
                         Nothing -> Still
                         Just ps -> MovingTo ps (AnimCycle char.walkCycle char.walkCycle)
@@ -175,17 +179,17 @@ middleOfX f1 f2 =
 
 -- Render a background image and character
 -- Optionally render some debug geometry...
--- For now the scene is fixed... Someday, scale it along with click events to accomodate
+-- For now the view is fixed in scale... Someday, scale it along with click events to accomodate
 -- the poor, miserable wretches who don't have my specific laptop
 view : State -> Html Msg
 view model =
   div [ on "click" offsetPosition
-      , style [ ("background-image", "url(img/bg1.png)")
+      , style [ ("background-image", "url(img/" ++ model.scene.image ++ ".png)")
               , ("width", "1666px")
               , ("height", "724px")
               ]
       ]
-      [ div [] (if model.debug then (List.map viewDebugField model.playfield) else [])
+      [ div [] (if model.debug then (List.map viewDebugField model.scene.playfields) else [])
       , viewChar model.character 
       , div [] (if model.debug then [viewDebugChar model.character] else [])
       ]
