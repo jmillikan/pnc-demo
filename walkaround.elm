@@ -1,11 +1,12 @@
 import Html exposing (Html, button, div, img, text)
-import Html.Events exposing (onClick, on)
+import Html.Events exposing (onClick, onWithOptions, Options)
 import Html.Attributes exposing (style, src)
 import Time exposing (Time, millisecond)
 import AnimationFrame exposing (diffs)
 import Json.Decode as Json
 import Keyboard exposing (KeyCode, presses)
 import Char exposing (toCode)
+import Maybe exposing (andThen)
 
 main : Program Never State Msg
 main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
@@ -18,7 +19,21 @@ initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1
 
 -- demoScene isn't as exciting as it sounds.
 demoScene : Scene
-demoScene = Scene "bg1" [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
+demoScene = Scene
+            "bg1"
+            [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
+            [Pos 1100 400] 
+            [Exit (Playfield 100 300 1090 150) (Pos 1140 400) 1 0]
+
+scene2 : Scene
+scene2 = Scene
+         "bg2"
+         [Playfield 200 100 0 150, Playfield 800 500 130 100]
+         [Pos 50 200]
+         [Exit (Playfield 70 200 0 50) (Pos 50 200) 0 0]
+
+scenes : List Scene
+scenes = [demoScene, scene2]
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -26,7 +41,7 @@ subscriptions : State -> Sub Msg
 subscriptions model = Sub.batch [ presses Key
                                 , case model.character.state of
                                       Still -> Sub.none
-                                      MovingTo _ _ -> diffs Tick
+                                      MovingTo _ _ _ -> diffs Tick
                                 ]
 
 type alias State = { character : Character
@@ -44,22 +59,28 @@ type alias Character = { width : Float
                        , state : CharState
                        , speed : Float -- pixels/Time in ms?
                        , facing : Facing -- This is separate from walkCycle for now...
-                       , walkCycle : List (String, Time)
+                       , walkCycle : AnimCycle
                        }
 
 type Facing = Left | Right    
 
 -- MovingTo - multi-segment movement plan
-type CharState = Still | MovingTo (List Pos) AnimCycle
+type CharState = Still | MovingTo (List Pos) InAnimation Action
+
+type Action = None | Leave Exit
+
+type alias AnimCycle = List (String, Time)
 
 -- Very simple animation system
 -- Or it was supposed to be...
-type alias AnimCycle = { segments : List (String, Time)
-                       , current : List (String, Time)
-                       }
+type alias InAnimation = { segments : AnimCycle
+                         , current : AnimCycle
+                         }
 
 type alias Scene = { image : String
                    , playfields : List Playfield
+                   , entrance : List Pos
+                   , exits : List Exit
                    }
 
 -- Playfield segment rectangle
@@ -70,7 +91,13 @@ type alias Playfield = { width : Float
                        , y : Float
                        }
 
-type Msg = Tick Time | Click Int Int | Key KeyCode
+type alias Exit = { field : Playfield
+                  , position : Pos
+                  , destination : Int
+                  , destinationSpawn : Int
+                  }
+
+type Msg = Tick Time | FloorClick Int Int | ExitClick Int Int | Key KeyCode
 
 update : Msg -> State -> ( State, Cmd Msg )    
 update msg model =
@@ -78,14 +105,40 @@ update msg model =
     case msg of
         Key p -> (if p == toCode 'd' then { model | debug = not model.debug } else model, Cmd.none)
         Tick delta ->
-            ({ model | character = walk char delta }, Cmd.none)
-        Click x y ->
+            let (newChar, action) = walk char delta -- In the future, maybe things can happen other ways... ie ambient timers or animations
+                newState = { model | character = newChar }
+            in case action of
+                   Nothing -> (newState, Cmd.none)
+                   Just a -> (doAction a newState, Cmd.none)
+        ExitClick x y ->
+            case findExit model.scene.exits (Pos (toFloat x) (toFloat y)) of
+                Nothing -> (Debug.log "Bad exit click?" model, Cmd.none)
+                Just exit ->
+                    let ps = walkOneX char.pos model.scene.playfields exit.position
+                        newState = case ps of
+                                       Nothing -> Debug.log "Failed exit click..." Still
+                                       Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
+                    in ({ model | character = { char | state = newState } }, Cmd.none)
+        FloorClick x y ->
             let newState = 
                     case walkOneX char.pos model.scene.playfields (Pos (toFloat x) (toFloat y))
                     of
                         Nothing -> Still
-                        Just ps -> MovingTo ps (AnimCycle char.walkCycle char.walkCycle)
+                        Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
             in ({ model | character = { char | state = newState } }, Cmd.none)
+
+doAction : Action -> State -> State
+doAction action model =
+    case action of
+        None -> model
+        Leave exit ->
+            let scene = List.head <| List.drop exit.destination scenes -- Need to use a Dict...
+                spawn = andThen (List.head << List.drop exit.destinationSpawn << .entrance) scene
+            in case (scene, spawn) of 
+                   (Just newScene, Just spawn) ->
+                       { model | scene = newScene, character =
+                             let char = model.character in { char | pos = spawn } } -- TODO: Position character...
+                   _ -> Debug.log "Missing scene" model
 
 -- Pos isn't a great representation for a direction, oh well
 directionFrom : Pos -> Pos -> Pos
@@ -98,14 +151,15 @@ directionFrom p1 p2 = let dx = p2.x - p1.x
 distanceFrom : Pos -> Pos -> Float
 distanceFrom p1 p2 = sqrt ((p1.x - p2.x) ^ 2 + (p1.y - p2.y) ^ 2)
 
-walk : Character -> Float -> Character
+-- Character's new position, and whether the character stopped on an exit                     
+walk : Character -> Float -> (Character, Maybe Action)
 walk char delta =
     case char.state of
-        Still -> char
+        Still -> (char, Nothing)
         -- No more movement to do, hold still
-        MovingTo [] _ -> { char | state = Still }
+        MovingTo [] _ a -> ({ char | state = Still }, Just a)
         -- Move toward dest at char.speed
-        MovingTo (dest :: rest) anim ->
+        MovingTo (dest :: rest) anim action ->
             -- Do some fairly bad math to move (delta * char.speed) towards destination
             let maxDistance = delta * char.speed
                 distance = distanceFrom char.pos dest
@@ -113,28 +167,28 @@ walk char delta =
             in
             if maxDistance > distance
             then walk { char | pos = Pos dest.x dest.y
-                      , state = MovingTo rest (advanceAnim anim delta)
+                      , state = MovingTo rest (advanceAnim anim delta) action
                       , facing = newFacing } delta -- Give away some movement here instead of bothering to chop up delta
             else
                 let dir = directionFrom char.pos dest
-                in { char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
-                   , state = MovingTo (dest :: rest) (advanceAnim anim delta)
-                   , facing = newFacing
-                   }
+                in ({ char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
+                    , state = MovingTo (dest :: rest) (advanceAnim anim delta) action
+                    , facing = newFacing
+                    }, Nothing)
 
 -- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
-advanceAnim : AnimCycle -> Time -> AnimCycle
+advanceAnim : InAnimation -> Time -> InAnimation
 advanceAnim a delta =
     case Debug.log "current" a.current of
-        [] -> advanceAnim (AnimCycle a.segments a.segments) delta
+        [] -> advanceAnim (InAnimation a.segments a.segments) delta
         (pose, remaining) :: rest ->
             if remaining > delta
-            then (AnimCycle a.segments ((pose, remaining - delta) :: rest))
-            else advanceAnim (AnimCycle a.segments rest) (delta - remaining)
+            then (InAnimation a.segments ((pose, remaining - delta) :: rest))
+            else advanceAnim (InAnimation a.segments rest) (delta - remaining)
 
 -- Plan a move to (x, y) through playfield graph.
 --startWalking : Character -> Pos -> Character                    
---startWalking char p = { char | state = MovingTo [p] (AnimCycle char.walkCycle char.walkCycle) }
+--startWalking char p = { char | state = MovingTo [p] (InAnimation char.walkCycle char.walkCycle) }
 
 -- First attempt at 'pathfinding' - keep just the field list, route through max of one "intersection" by force
 -- Next attempt should use BFS^wtree-spanning
@@ -142,7 +196,8 @@ walkOneX : Pos -> List Playfield -> Pos -> Maybe (List Pos)
 walkOneX sourceP playfields p =
     let srcPlayfield = findPlayfield playfields sourceP
         -- Really we could get dest through click events but that's no fun
-        destPlayfield = findPlayfield playfields p in
+        destPlayfield = findPlayfield playfields p
+    in
     case (srcPlayfield, destPlayfield, srcPlayfield == destPlayfield) of
         (Just src, Just dest, True) -> Just [p]
         (Just src, Just dest, False) ->
@@ -153,6 +208,9 @@ walkOneX sourceP playfields p =
                      
 findPlayfield : List Playfield -> Pos -> Maybe Playfield
 findPlayfield fields pos = List.head <| List.filter (pointInPlayfield pos) fields
+
+findExit : List Exit -> Pos -> Maybe Exit
+findExit exits pos = List.head <| List.filter (pointInPlayfield pos << .field) exits
 
 pointInPlayfield : Pos -> Playfield -> Bool
 pointInPlayfield p field =
@@ -183,20 +241,37 @@ middleOfX f1 f2 =
 -- the poor, miserable wretches who don't have my specific laptop
 view : State -> Html Msg
 view model =
-  div [ on "click" offsetPosition
-      , style [ ("background-image", "url(img/" ++ model.scene.image ++ ".png)")
+  div [ style [ ("background-image", "url(img/" ++ model.scene.image ++ ".png)")
               , ("width", "1666px")
               , ("height", "724px")
               ]
       ]
-      [ div [] (if model.debug then (List.map viewDebugField model.scene.playfields) else [])
+      [ div [] (if model.debug then (List.map (viewDebugField "blue") model.scene.playfields)
+                    ++ (List.map (viewDebugField "green" << .field) model.scene.exits)
+                    ++ (List.map (viewDebugPos "e" << .position) model.scene.exits) else [])
       , viewChar model.character 
-      , div [] (if model.debug then [viewDebugChar model.character] else [])
+      , div [] (if model.debug then [viewDebugPos "C" model.character.pos] else [])
+      -- These need to be "on top". This is not really a good solution.
+      , div [] (List.map (clickField identity (always FloorClick)) model.scene.playfields)
+      , div [] (List.map (clickField (.field) (always ExitClick)) model.scene.exits)
       ]
 
+selfish : Options
+selfish = Options True True
+
 -- https://github.com/fredcy/elm-svg-mouse-offset/blob/master/Main.elm    
-offsetPosition : Json.Decoder Msg
-offsetPosition = Json.map2 Click (Json.field "pageX" Json.int) (Json.field "pageY" Json.int)
+offsetPosition : (Int -> Int -> Msg) -> Json.Decoder Msg
+offsetPosition msg = Json.map2 msg (Json.field "pageX" Json.int) (Json.field "pageY" Json.int)
+
+-- A lot of overlap with viewDebugField...                     
+clickField : (a -> Playfield) -> (a -> Int -> Int -> Msg) -> a -> Html Msg
+clickField f m e = div [ style [ ("height", toString (f e).height ++ "px")
+                          , ("width", toString (f e).width ++ "px")
+                          , ("position", "absolute")
+                          , ("top", toString (f e).y ++ "px") -- fudge fudge
+                          , ("left", toString (f e).x ++ "px")
+                          ]
+                  , onWithOptions "click" selfish (offsetPosition (m e)) ] [ ]
 
 viewChar : Character -> Html Msg
 viewChar c = div [ style [ ("height", toString c.height ++ "px")
@@ -210,7 +285,7 @@ viewChar c = div [ style [ ("height", toString c.height ++ "px")
 pose : Character -> String
 pose c = case c.state of
              Still -> "s"
-             MovingTo _ a ->
+             MovingTo _ a _ ->
                  case a.current of
                      (p, _) :: _ -> p
                      _ -> "1"
@@ -220,18 +295,18 @@ face c = case c.facing of
              Left -> "left"
              Right -> "right"
 
-viewDebugChar : Character -> Html Msg
-viewDebugChar c = div
+viewDebugPos : String -> Pos -> Html Msg
+viewDebugPos c p = div
                   [ style [ ("position", "absolute")
-                          , ("top", toString c.pos.y ++ "px") -- fudge fudge
-                          , ("left", toString c.pos.x ++ "px")
+                          , ("top", toString p.y ++ "px") -- fudge fudge
+                          , ("left", toString p.x ++ "px")
                           , ("border", "solid red")
                           , ("border-width", "2px 0px 0px 2px")
                           ] ]
-                  [ text "C" ]
+                  [ text c ]
              
-viewDebugField : Playfield -> Html Msg             
-viewDebugField f = div [ style [ ("background-color", "green")
+viewDebugField : String -> Playfield -> Html Msg             
+viewDebugField color f = div [ style [ ("background-color", color)
                                , ("height", toString f.height ++ "px")
                                , ("width", toString f.width ++ "px")
                                , ("position", "absolute")
