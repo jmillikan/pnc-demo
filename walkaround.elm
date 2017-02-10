@@ -7,12 +7,13 @@ import Json.Decode as Json
 import Keyboard exposing (KeyCode, presses)
 import Char exposing (toCode)
 import Maybe exposing (andThen)
+import Dict exposing (Dict, fromList, get)
 
 main : Program Never State Msg
 main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
 init : State
-init = State initChar demoScene False []
+init = State initChar "middle" sceneDict False []
 
 initChar : Character
 initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
@@ -23,15 +24,15 @@ demoScene = Scene
             "bg1"
             [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
             [Pos 1100 400] 
-            [Exit (Playfield 100 300 1250 150) (Pos 1140 400) 1 0 "e-resize"
-            ,Exit (Playfield 100 300 0 80) (Pos 50 330) 2 0 "e-resize"]
+            [Exit (Playfield 100 300 1250 150) (Pos 1140 400) "east" 0 "e-resize"
+            ,Exit (Playfield 100 300 0 80) (Pos 50 330) "west" 0 "w-resize"]
 
 scene2 : Scene
 scene2 = Scene
          "bg2"
          [Playfield 200 100 0 150, Playfield 800 500 130 100]
          [Pos 50 200]
-         [Exit (Playfield 70 200 0 50) (Pos 50 200) 0 0 "w-resize"]
+         [Exit (Playfield 70 200 0 50) (Pos 50 200) "middle" 0 "w-resize"]
 
 scene3 : Scene
 scene3 = Scene
@@ -42,10 +43,12 @@ scene3 = Scene
          , { width = 100, height = 140, x = 873, y = 150 }
          ]
          [Pos 1150 450]
-         [Exit (Playfield 100 250 1100 200) (Pos 1150 450) 0 0 "e-resize"]
+         [Exit (Playfield 100 250 1100 200) (Pos 1150 450) "middle" 0 "e-resize"]
 
 scenes : List Scene
 scenes = [demoScene, scene2, scene3]
+
+sceneDict = Dict.fromList [("middle", demoScene), ("west", scene3), ("east", scene2)]
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -57,7 +60,8 @@ subscriptions model = Sub.batch [ presses Key
                                 ]
 
 type alias State = { character : Character
-                   , scene : Scene
+                   , currentScene : String
+                   , scenes : Dict String Scene
                    , debug : Bool
                    , clickData : List Pos -- For random debugging/design purposes...
                    }
@@ -108,7 +112,7 @@ type alias Playfield = { width : Float
 
 type alias Exit = { field : Playfield
                   , position : Pos
-                  , destination : Int
+                  , destination : String
                   , destinationSpawn : Int
                   , cursor : String -- hack hack hack
                   }
@@ -142,9 +146,15 @@ debugField model =
         _ -> "No dice"
 
 -- In the near future, split in-game actions from debugging ones and handle separately... 
-update : Msg -> State -> ( State, Cmd Msg )    
+update : Msg -> State -> ( State, Cmd Msg )
 update msg modelIn =
-    let model = collectClicks msg modelIn in -- Fungible. For debugging.
+    let model = collectClicks msg modelIn -- Fungible. For debugging.
+        s = get model.currentScene model.scenes in
+    case s of
+        Nothing -> Debug.log "No scene..." (model, Cmd.none)
+        Just scene -> updateWithScene msg model scene
+
+updateWithScene msg model scene = 
     let char = model.character in
     case msg of
         Key p -> (if p == toCode 'd'
@@ -159,17 +169,17 @@ update msg modelIn =
                    Nothing -> (newState, Cmd.none)
                    Just a -> (doAction a newState, Cmd.none)
         ExitClick x y ->
-            case findExit model.scene.exits (Pos (toFloat x) (toFloat y)) of
+            case findExit scene.exits (Pos (toFloat x) (toFloat y)) of
                 Nothing -> (Debug.log "Bad exit click?" model, Cmd.none)
                 Just exit ->
-                    let ps = walkOneX char.pos model.scene.playfields exit.position
+                    let ps = walkOneX char.pos scene.playfields exit.position
                         newState = case ps of
                                        Nothing -> Debug.log "Failed exit click..." Still
                                        Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
                     in ({ model | character = { char | state = newState } }, Cmd.none)
         FloorClick x y ->
             let newState = 
-                    case walkOneX char.pos model.scene.playfields (Pos (toFloat x) (toFloat y))
+                    case walkOneX char.pos scene.playfields (Pos (toFloat x) (toFloat y))
                     of
                         Nothing -> Still
                         Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
@@ -181,13 +191,17 @@ doAction action model =
     case action of
         None -> model
         Leave exit ->
-            let scene = List.head <| List.drop exit.destination scenes -- Need to use a Dict...
-                spawn = andThen (List.head << List.drop exit.destinationSpawn << .entrance) scene
-            in case (scene, spawn) of 
-                   (Just newScene, Just spawn) ->
-                       { model | scene = newScene, character =
-                             let char = model.character in { char | pos = spawn } } -- TODO: Position character...
-                   _ -> Debug.log "Missing scene" model
+            let s = get exit.destination model.scenes in
+            case s of
+                Nothing -> Debug.log "No scene (doAction)..." model
+                Just scene ->
+                    let spawn = List.head <| List.drop exit.destinationSpawn scene.entrance
+                        char = model.character 
+                    in case spawn of 
+                           Just spawn ->
+                               { model | currentScene = exit.destination
+                               , character = { char | pos = spawn } } -- TODO: Position character...
+                           _ -> Debug.log "Missing scene" model
 
 -- Pos isn't a great representation for a direction, oh well
 directionFrom : Pos -> Pos -> Pos
@@ -290,21 +304,27 @@ middleOfX f1 f2 =
 -- the poor, miserable wretches who don't have my specific laptop
 view : State -> Html Msg
 view model =
-  div [ style [ ("background-image", "url(img/" ++ model.scene.image ++ ".png)")
-              , ("width", "1400px")
-              , ("height", "700px")
-              ]
-      , onWithOptions "click" selfish (offsetPosition StrayClick)
-      ]
-      [ div [] (if model.debug then
-                    (List.map (viewDebugField "blue") model.scene.playfields)
-                    ++ (List.map (viewDebugField "green" << .field) model.scene.exits)
-                    ++ (List.map (viewDebugPos "e" << .position) model.scene.exits) else [])
-      , viewChar model.character 
-      , div [] (if model.debug then [viewDebugPos "C" model.character.pos] else [])
+  let s = get model.currentScene model.scenes in
+  case s of
+      Nothing -> text "No scene, very bad error."
+      Just scene -> renderScene scene model.character model.debug
+
+renderScene scene char debug =
+    div [ style [ ("background-image", "url(img/" ++ scene.image ++ ".png)")
+                , ("width", "1400px")
+                , ("height", "700px")
+                ]
+        , onWithOptions "click" selfish (offsetPosition StrayClick)
+        ]
+      [ div [] (if debug then
+                    (List.map (viewDebugField "blue") scene.playfields)
+                    ++ (List.map (viewDebugField "green" << .field) scene.exits)
+                    ++ (List.map (viewDebugPos "e" << .position) scene.exits) else [])
+      , viewChar char 
+      , div [] (if debug then [viewDebugPos "C" char.pos] else [])
       -- These need to be "on top". This is not really a good solution.
-      , div [] (List.map (clickField identity (always FloorClick) (always "move")) model.scene.playfields)
-      , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) model.scene.exits)
+      , div [] (List.map (clickField identity (always FloorClick) (always "move")) scene.playfields)
+      , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) scene.exits)
       ]
 
 selfish : Options
@@ -332,7 +352,6 @@ viewChar c = div [ style [ ("height", toString c.height ++ "px")
                          , ("top", toString (c.pos.y - c.height + 20) ++ "px") -- fudge fudge
                          , ("left", toString (c.pos.x - c.width / 2) ++ "px")
                          ] ] [ img [src ("img/" ++ pose c ++ face c ++ ".png"), style [ ("width", toString c.width ++ "px" ) ] ] [] ]
-
 
 pose : Character -> String
 pose c = case c.state of
