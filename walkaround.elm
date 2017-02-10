@@ -6,8 +6,9 @@ import AnimationFrame exposing (diffs)
 import Json.Decode as Json
 import Keyboard exposing (KeyCode, presses)
 import Char exposing (toCode)
-import Maybe exposing (andThen)
-import Dict exposing (Dict, fromList, get)
+import Maybe exposing (andThen, withDefault)
+import Dict exposing (Dict, fromList, toList, get, values)
+import Tuple exposing (first, second)
 
 main : Program Never State Msg
 main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
@@ -16,7 +17,7 @@ init : State
 init = State initChar "middle" sceneDict False []
 
 initChar : Character
-initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
+initChar = Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)] []
 
 -- demoScene isn't as exciting as it sounds.
 demoScene : Scene
@@ -26,6 +27,7 @@ demoScene = Scene
             [Pos 1100 400] 
             [Exit (Playfield 100 300 1250 150) (Pos 1140 400) "east" 0 "e-resize"
             ,Exit (Playfield 100 300 0 80) (Pos 50 330) "west" 0 "w-resize"]
+            (fromList [])
 
 scene2 : Scene
 scene2 = Scene
@@ -33,21 +35,32 @@ scene2 = Scene
          [Playfield 200 100 0 150, Playfield 800 500 130 100]
          [Pos 50 200]
          [Exit (Playfield 70 200 0 50) (Pos 50 200) "middle" 0 "w-resize"]
+         (fromList [])
 
 scene3 : Scene
 scene3 = Scene
          "bg3"
          [ Playfield 1000 200 200 350
-         , { width = 100, height = 140, x = 294, y = 150 }
          , { width = 100, height = 140, x = 590, y = 150 }
          , { width = 100, height = 140, x = 873, y = 150 }
          ]
-         [Pos 1150 450]
-         [Exit (Playfield 100 250 1100 200) (Pos 1150 450) "middle" 0 "e-resize"]
+         [ Pos 1150 450 ]
+         [ Exit (Playfield 100 250 1100 200) (Pos 1150 450) "middle" 0 "e-resize" ]
+         (fromList [ ("panel1", ItemLocation { width = 100, height = 140, x = 294, y = 150 }
+                          (Just (Item 100 140 "tile-1" "This tile says one."))
+                          (Pos 350 380))
+                   , ("panel2", ItemLocation { width = 100, height = 140, x = 590, y = 150 }
+                          (Just (Item 100 140 "tile-2" "This tile says two."))
+                          (Pos 640 380))
+                   , ("panel3", ItemLocation { width = 100, height = 140, x = 873, y = 150 }
+                          (Just (Item 100 140 "tile-3" "This tile says three."))
+                          (Pos 900 380))
+         ])
 
 scenes : List Scene
 scenes = [demoScene, scene2, scene3]
 
+sceneDict : Dict String Scene
 sceneDict = Dict.fromList [("middle", demoScene), ("west", scene3), ("east", scene2)]
 
 -- Much later we might need ticks always or more of the time...
@@ -77,14 +90,32 @@ type alias Character = { width : Float
                        , speed : Float -- pixels/Time in ms?
                        , facing : Facing -- This is separate from walkCycle for now...
                        , walkCycle : AnimCycle
+                       , inventory : List Item
                        }
+
+type alias Item = { width : Float
+                  , height : Float
+                  , img : String
+                  , name : String -- Possibly debug-only...
+                  }
+
+-- General purpose on-screen item location...
+-- Might be re-usable for inventory...
+-- For now, any item can be put "anywhere"...
+-- Later, some items will be pick-up only, fit specific item types, etc.
+type alias ItemLocation = { field : Playfield
+                          , contents : Maybe Item
+                          , collectPoint : Pos -- Point to walk to before interacting, should be in a field
+                          }
 
 type Facing = Left | Right    
 
 -- MovingTo - multi-segment movement plan
 type CharState = Still | MovingTo (List Pos) InAnimation Action
 
-type Action = None | Leave Exit
+type Action = None
+            | Leave Exit
+            | UseItemLocation String
 
 type alias AnimCycle = List (String, Time)
 
@@ -100,6 +131,7 @@ type alias Scene = { image : String
                    , playfields : List Playfield
                    , entrance : List Pos
                    , exits : List Exit
+                   , itemLocations : Dict String ItemLocation
                    }
 
 -- Playfield segment rectangle
@@ -121,6 +153,7 @@ type Msg = Tick Time
          | FloorClick Int Int
          | ExitClick Int Int
          | StrayClick Int Int -- Debugging...
+         | ItemLocationClick String Int Int
          | Key KeyCode
 
 -- Debug stuff, non-essential
@@ -152,44 +185,68 @@ update msg modelIn =
         s = get model.currentScene model.scenes in
     case s of
         Nothing -> Debug.log "No scene..." (model, Cmd.none)
-        Just scene -> updateWithScene msg model scene
+        Just scene -> (updateWithScene msg model scene, Cmd.none)
 
+-- TODO: Move State out via action and declare victory over abstraction                      
+updateWithScene : Msg -> State -> Scene -> State                      
 updateWithScene msg model scene = 
     let char = model.character in
     case msg of
-        Key p -> (if p == toCode 'd'
+        Key p -> if p == toCode 'd'
                   then { model | debug = not model.debug }
                   else if p == toCode 'f'
                        then Debug.log (debugField model) model
-                       else model, Cmd.none)
+                       else model
         Tick delta ->
             let (newChar, action) = walk char delta -- In the future, maybe things can happen other ways... ie ambient timers or animations
                 newState = { model | character = newChar }
             in case action of
-                   Nothing -> (newState, Cmd.none)
-                   Just a -> (doAction a newState, Cmd.none)
+                   Nothing -> newState
+                   Just a -> doAction a newState
         ExitClick x y ->
-            case findExit scene.exits (Pos (toFloat x) (toFloat y)) of
-                Nothing -> (Debug.log "Bad exit click?" model, Cmd.none)
+            case findExit scene.exits (clickPos x y) of
+                Nothing -> Debug.log "Bad exit click?" model
                 Just exit ->
                     let ps = walkOneX char.pos scene.playfields exit.position
                         newState = case ps of
                                        Nothing -> Debug.log "Failed exit click..." Still
                                        Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
-                    in ({ model | character = { char | state = newState } }, Cmd.none)
+                    in { model | character = { char | state = newState } }
         FloorClick x y ->
             let newState = 
-                    case walkOneX char.pos scene.playfields (Pos (toFloat x) (toFloat y))
+                    case walkOneX char.pos scene.playfields (clickPos x y)
                     of
                         Nothing -> Still
                         Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
-            in ({ model | character = { char | state = newState } }, Cmd.none)
-        StrayClick _ _ -> (model, Cmd.none)
+            in { model | character = { char | state = newState } }
+        ItemLocationClick k x y ->
+            get k scene.itemLocations |> maybe model
+                (\itemLoc ->
+                     let newState = 
+                     case walkOneX char.pos scene.playfields itemLoc.collectPoint
+                     of
+                         Nothing -> Debug.log "Failure routing to item location" Still
+                         Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle)
+                         <| UseItemLocation k
+                     in { model | character = { char | state = newState } })
+            
+        StrayClick _ _ -> model
+
+maybe : b -> (a -> b) -> Maybe a -> b
+maybe def f m = withDefault def (Maybe.map f m)        
 
 doAction : Action -> State -> State
 doAction action model =
     case action of
         None -> model
+        UseItemLocation itemKey ->
+            -- This isn't much or any better than chaining andThen >_<
+            get model.currentScene model.scenes |> maybe model
+                (\scene -> get itemKey scene.itemLocations |> maybe model
+                     (\itemLoc -> 
+                          case itemLoc.contents of
+                              Nothing -> Debug.log "TODO: Put something in..." model
+                              Just i -> grabItemFrom i itemKey itemLoc model))
         Leave exit ->
             let s = get exit.destination model.scenes in
             case s of
@@ -202,6 +259,23 @@ doAction action model =
                                { model | currentScene = exit.destination
                                , character = { char | pos = spawn } } -- TODO: Position character...
                            _ -> Debug.log "Missing scene" model
+
+-- This is excruciating
+-- Afterwards, the item location is emptied in its slot, and the character has the item in head of inventory
+grabItemFrom : Item -> String -> ItemLocation -> State -> State                                
+grabItemFrom item itemKey itemLoc model =
+    let char = model.character in
+    { model | scenes = Dict.update model.currentScene (Maybe.map <| emptySceneItemLocation itemKey) model.scenes
+    , character = { char | inventory = item :: char.inventory }
+    }
+
+emptySceneItemLocation : String -> Scene -> Scene
+emptySceneItemLocation itemKey scene =
+    { scene | itemLocations = Dict.update itemKey (Maybe.map emptyItemLocation) scene.itemLocations }
+
+emptyItemLocation : ItemLocation -> ItemLocation
+emptyItemLocation itemLoc = { itemLoc | contents = Nothing }                    
+    
 
 -- Pos isn't a great representation for a direction, oh well
 directionFrom : Pos -> Pos -> Pos
@@ -309,6 +383,7 @@ view model =
       Nothing -> text "No scene, very bad error."
       Just scene -> renderScene scene model.character model.debug
 
+renderScene : Scene -> Character -> Bool -> Html Msg                    
 renderScene scene char debug =
     div [ style [ ("background-image", "url(img/" ++ scene.image ++ ".png)")
                 , ("width", "1400px")
@@ -319,14 +394,44 @@ renderScene scene char debug =
       [ div [] (if debug then
                     (List.map (viewDebugField "blue") scene.playfields)
                     ++ (List.map (viewDebugField "green" << .field) scene.exits)
-                    ++ (List.map (viewDebugPos "e" << .position) scene.exits) else [])
-      , viewChar char 
+                    ++ (List.map (viewDebugPos "e" << .position) scene.exits)
+                    ++ (List.map (viewDebugPos "i" << .collectPoint) (values scene.itemLocations))
+                    ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations)) else [])
+      , div [] (List.map viewItemLocation (values scene.itemLocations))
+      , viewChar char
       , div [] (if debug then [viewDebugPos "C" char.pos] else [])
       -- These need to be "on top". This is not really a good solution.
-      , div [] (List.map (clickField identity (always FloorClick) (always "move")) scene.playfields)
+      , div [] (List.map (clickField identity (always FloorClick) (always "crosshair")) scene.playfields)
       , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) scene.exits)
+      , div [] (List.map (clickField (.field << second) (ItemLocationClick << first) (always "move")) (toList scene.itemLocations))
+      , viewInventory char.inventory
       ]
 
+viewInventory : List Item -> Html Msg
+viewInventory items =
+    div [ style [ ("position", "absolute")
+                , ("bottom", "20px")
+                , ("left", "10px")
+                ]
+        ]
+        (List.map viewInvItem items)
+
+viewInvItem : Item -> Html Msg
+viewInvItem item =
+    img [ src <| "img/" ++ item.img ++ ".png" ] []
+
+viewItemLocation : ItemLocation -> Html Msg
+viewItemLocation itemLoc =
+    case itemLoc.contents of
+        Nothing -> text ""
+        Just item ->
+            div [ style [ ("height", toString item.height ++ "px")
+                         , ("width", toString item.width ++ "px")
+                         , ("position", "absolute")
+                         , ("top", toString itemLoc.field.y ++ "px") -- fudge fudge
+                         , ("left", toString itemLoc.field.x ++ "px")
+                         ] ] [ img [src ("img/" ++ item.img ++ ".png"), style [ ("width", toString item.width ++ "px" ) ] ] [] ]
+            
 selfish : Options
 selfish = Options True True
 
