@@ -12,7 +12,7 @@ main : Program Never State Msg
 main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
 init : State
-init = State initChar demoScene False
+init = State initChar demoScene False []
 
 initChar : Character
 initChar = (Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)])       
@@ -23,7 +23,8 @@ demoScene = Scene
             "bg1"
             [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
             [Pos 1100 400] 
-            [Exit (Playfield 100 300 1250 150) (Pos 1140 400) 1 0 "e-resize"]
+            [Exit (Playfield 100 300 1250 150) (Pos 1140 400) 1 0 "e-resize"
+            ,Exit (Playfield 100 300 0 80) (Pos 50 330) 2 0 "e-resize"]
 
 scene2 : Scene
 scene2 = Scene
@@ -32,8 +33,19 @@ scene2 = Scene
          [Pos 50 200]
          [Exit (Playfield 70 200 0 50) (Pos 50 200) 0 0 "w-resize"]
 
+scene3 : Scene
+scene3 = Scene
+         "bg3"
+         [ Playfield 1000 200 200 350
+         , { width = 100, height = 140, x = 294, y = 150 }
+         , { width = 100, height = 140, x = 590, y = 150 }
+         , { width = 100, height = 140, x = 873, y = 150 }
+         ]
+         [Pos 1150 450]
+         [Exit (Playfield 100 250 1100 200) (Pos 1150 450) 0 0 "e-resize"]
+
 scenes : List Scene
-scenes = [demoScene, scene2]
+scenes = [demoScene, scene2, scene3]
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -47,6 +59,7 @@ subscriptions model = Sub.batch [ presses Key
 type alias State = { character : Character
                    , scene : Scene
                    , debug : Bool
+                   , clickData : List Pos -- For random debugging/design purposes...
                    }
 
 -- Positions and units are screen pixels
@@ -100,13 +113,45 @@ type alias Exit = { field : Playfield
                   , cursor : String -- hack hack hack
                   }
 
-type Msg = Tick Time | FloorClick Int Int | ExitClick Int Int | Key KeyCode
+type Msg = Tick Time
+         | FloorClick Int Int
+         | ExitClick Int Int
+         | StrayClick Int Int -- Debugging...
+         | Key KeyCode
 
+-- Debug stuff, non-essential
+addClick : Pos -> State -> State
+addClick pos model = { model | clickData = pos :: model.clickData }
+
+clickPos : Int -> Int -> Pos                     
+clickPos x y = Pos (toFloat x) (toFloat y)
+
+collectClicks : Msg -> State -> State               
+collectClicks msg modelIn =
+    case msg of
+        ExitClick x y -> addClick (clickPos x y) modelIn
+        FloorClick x y -> addClick (clickPos x y) modelIn
+        StrayClick x y -> addClick (clickPos x y) modelIn
+        _ -> modelIn
+
+debugField : State -> String             
+debugField model =
+    case model.clickData of
+        p2 :: p1 :: _ -> "Pos 1: " ++ toString p1 ++ "; Pos 2: " ++ toString p2 ++ "; Field: " ++
+                         toString (Playfield (p2.x - p1.x) (p2.y - p1.y) p1.x p1.y)
+        _ -> "No dice"
+
+-- In the near future, split in-game actions from debugging ones and handle separately... 
 update : Msg -> State -> ( State, Cmd Msg )    
-update msg model =
+update msg modelIn =
+    let model = collectClicks msg modelIn in -- Fungible. For debugging.
     let char = model.character in
     case msg of
-        Key p -> (if p == toCode 'd' then { model | debug = not model.debug } else model, Cmd.none)
+        Key p -> (if p == toCode 'd'
+                  then { model | debug = not model.debug }
+                  else if p == toCode 'f'
+                       then Debug.log (debugField model) model
+                       else model, Cmd.none)
         Tick delta ->
             let (newChar, action) = walk char delta -- In the future, maybe things can happen other ways... ie ambient timers or animations
                 newState = { model | character = newChar }
@@ -129,6 +174,7 @@ update msg model =
                         Nothing -> Still
                         Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
             in ({ model | character = { char | state = newState } }, Cmd.none)
+        StrayClick _ _ -> (model, Cmd.none)
 
 doAction : Action -> State -> State
 doAction action model =
@@ -248,8 +294,10 @@ view model =
               , ("width", "1400px")
               , ("height", "700px")
               ]
+      , onWithOptions "click" selfish (offsetPosition StrayClick)
       ]
-      [ div [] (if model.debug then (List.map (viewDebugField "blue") model.scene.playfields)
+      [ div [] (if model.debug then
+                    (List.map (viewDebugField "blue") model.scene.playfields)
                     ++ (List.map (viewDebugField "green" << .field) model.scene.exits)
                     ++ (List.map (viewDebugPos "e" << .position) model.scene.exits) else [])
       , viewChar model.character 
