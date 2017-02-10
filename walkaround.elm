@@ -24,8 +24,8 @@ demoScene : Scene
 demoScene = Scene
             "bg1"
             [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
-            [Pos 1100 400] 
-            [Exit (Playfield 100 300 1250 150) (Pos 1140 400) "east" 0 "e-resize"
+            [Pos 1100 400, Pos 50 350] 
+            [Exit (Playfield 100 300 1250 150) (Pos 1275 400) "east" 0 "e-resize"
             ,Exit (Playfield 100 300 0 80) (Pos 50 330) "west" 0 "w-resize"]
             (fromList [])
 
@@ -45,7 +45,7 @@ scene3 = Scene
          , { width = 100, height = 140, x = 873, y = 150 }
          ]
          [ Pos 1150 450 ]
-         [ Exit (Playfield 100 250 1100 200) (Pos 1150 450) "middle" 0 "e-resize" ]
+         [ Exit (Playfield 100 250 1200 200) (Pos 1150 450) "middle" 1 "e-resize" ]
          (fromList [ ("panel1", ItemLocation { width = 100, height = 140, x = 294, y = 150 }
                           (Just (Item 100 140 "tile-1" "This tile says one."))
                           (Pos 350 380))
@@ -245,7 +245,7 @@ doAction action model =
                 (\scene -> get itemKey scene.itemLocations |> maybe model
                      (\itemLoc -> 
                           case itemLoc.contents of
-                              Nothing -> Debug.log "TODO: Put something in..." model
+                              Nothing -> putItemIn itemKey model
                               Just i -> grabItemFrom i itemKey itemLoc model))
         Leave exit ->
             let s = get exit.destination model.scenes in
@@ -269,13 +269,31 @@ grabItemFrom item itemKey itemLoc model =
     , character = { char | inventory = item :: char.inventory }
     }
 
+-- Character loses left-most item (for now)
+-- leftmost item goes into itemLocationx
+putItemIn : String -> State -> State
+putItemIn itemKey s =
+    let char = s.character in
+    case char.inventory of
+        [] -> s
+        item :: newInv -> 
+    { s | scenes = Dict.update s.currentScene (Maybe.map <| fillSceneItemLocation itemKey item) s.scenes
+    , character = { char | inventory = newInv }
+    }
+
+fillSceneItemLocation : String -> Item -> Scene -> Scene
+fillSceneItemLocation itemKey item scene =
+    { scene | itemLocations = Dict.update itemKey (Maybe.map <| fillItemLocation item) scene.itemLocations }
+    
 emptySceneItemLocation : String -> Scene -> Scene
 emptySceneItemLocation itemKey scene =
     { scene | itemLocations = Dict.update itemKey (Maybe.map emptyItemLocation) scene.itemLocations }
 
 emptyItemLocation : ItemLocation -> ItemLocation
 emptyItemLocation itemLoc = { itemLoc | contents = Nothing }                    
-    
+
+fillItemLocation : Item -> ItemLocation -> ItemLocation
+fillItemLocation item itemLoc = { itemLoc | contents = Just item }                    
 
 -- Pos isn't a great representation for a direction, oh well
 directionFrom : Pos -> Pos -> Pos
