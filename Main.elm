@@ -10,58 +10,12 @@ import Maybe exposing (andThen, withDefault)
 import Dict exposing (Dict, fromList, toList, get, values)
 import Tuple exposing (first, second)
 
+import GameState exposing (..)
+
+import DemoLevel exposing (demoState)
+
 main : Program Never State Msg
-main = Html.program { init = (init, Cmd.none), view = view, update = update, subscriptions = subscriptions }
-
-init : State
-init = State initChar "middle" sceneDict False []
-
-initChar : Character
-initChar = Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)] []
-
--- demoScene isn't as exciting as it sounds.
-demoScene : Scene
-demoScene = Scene
-            "bg1"
-            [Playfield 800 330 100 160, Playfield 510 100 890 350, Playfield 700 100 -590 280]
-            [Pos 1100 400, Pos 50 350] 
-            [Exit (Playfield 100 300 1250 150) (Pos 1275 400) "east" 0 "e-resize"
-            ,Exit (Playfield 100 300 0 80) (Pos 50 330) "west" 0 "w-resize"]
-            (fromList [])
-
-scene2 : Scene
-scene2 = Scene
-         "bg2"
-         [Playfield 200 100 0 150, Playfield 800 500 130 100]
-         [Pos 50 200]
-         [Exit (Playfield 70 200 0 50) (Pos 50 200) "middle" 0 "w-resize"]
-         (fromList [])
-
-scene3 : Scene
-scene3 = Scene
-         "bg3"
-         [ Playfield 1000 200 200 350
-         , { width = 100, height = 140, x = 590, y = 150 }
-         , { width = 100, height = 140, x = 873, y = 150 }
-         ]
-         [ Pos 1150 450 ]
-         [ Exit (Playfield 100 250 1200 200) (Pos 1150 450) "middle" 1 "e-resize" ]
-         (fromList [ ("panel1", ItemLocation { width = 100, height = 140, x = 294, y = 150 }
-                          (Just (Item 100 140 "tile-1" "This tile says one."))
-                          (Pos 350 380))
-                   , ("panel2", ItemLocation { width = 100, height = 140, x = 590, y = 150 }
-                          (Just (Item 100 140 "tile-2" "This tile says two."))
-                          (Pos 640 380))
-                   , ("panel3", ItemLocation { width = 100, height = 140, x = 873, y = 150 }
-                          (Just (Item 100 140 "tile-3" "This tile says three."))
-                          (Pos 900 380))
-         ])
-
-scenes : List Scene
-scenes = [demoScene, scene2, scene3]
-
-sceneDict : Dict String Scene
-sceneDict = Dict.fromList [("middle", demoScene), ("west", scene3), ("east", scene2)]
+main = Html.program { init = (demoState, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -72,83 +26,6 @@ subscriptions model = Sub.batch [ presses Key
                                       MovingTo _ _ _ -> diffs Tick
                                 ]
 
-type alias State = { character : Character
-                   , currentScene : String
-                   , scenes : Dict String Scene
-                   , debug : Bool
-                   , clickData : List Pos -- For random debugging/design purposes...
-                   }
-
--- Positions and units are screen pixels
-type alias Pos = { x: Float, y: Float }
-
--- A character. Its position is assumed to be at the bottom left of its graphic
-type alias Character = { width : Float
-                       , height : Float
-                       , pos : Pos
-                       , state : CharState
-                       , speed : Float -- pixels/Time in ms?
-                       , facing : Facing -- This is separate from walkCycle for now...
-                       , walkCycle : AnimCycle
-                       , inventory : List Item
-                       }
-
-type alias Item = { width : Float
-                  , height : Float
-                  , img : String
-                  , name : String -- Possibly debug-only...
-                  }
-
--- General purpose on-screen item location...
--- Might be re-usable for inventory...
--- For now, any item can be put "anywhere"...
--- Later, some items will be pick-up only, fit specific item types, etc.
-type alias ItemLocation = { field : Playfield
-                          , contents : Maybe Item
-                          , collectPoint : Pos -- Point to walk to before interacting, should be in a field
-                          }
-
-type Facing = Left | Right    
-
--- MovingTo - multi-segment movement plan
-type CharState = Still | MovingTo (List Pos) InAnimation Action
-
-type Action = None
-            | Leave Exit
-            | UseItemLocation String
-
-type alias AnimCycle = List (String, Time)
-
--- Very simple animation system
--- Or it was supposed to be...
-type alias InAnimation = { segments : AnimCycle
-                         , current : AnimCycle
-                         }
-
-type alias Cursor = String    
-
-type alias Scene = { image : String
-                   , playfields : List Playfield
-                   , entrance : List Pos
-                   , exits : List Exit
-                   , itemLocations : Dict String ItemLocation
-                   }
-
--- Playfield segment rectangle
--- Needs to be called something else...
-type alias Playfield = { width : Float
-                       , height : Float
-                       , x : Float
-                       , y : Float
-                       }
-
-type alias Exit = { field : Playfield
-                  , position : Pos
-                  , destination : String
-                  , destinationSpawn : Int
-                  , cursor : String -- hack hack hack
-                  }
-
 type Msg = Tick Time
          | FloorClick Int Int
          | ExitClick Int Int
@@ -156,7 +33,7 @@ type Msg = Tick Time
          | ItemLocationClick String Int Int
          | Key KeyCode
 
--- Debug stuff, non-essential
+-- Non-essential stuff for debugging and fudging level elements
 addClick : Pos -> State -> State
 addClick pos model = { model | clickData = pos :: model.clickData }
 
@@ -183,44 +60,49 @@ update : Msg -> State -> ( State, Cmd Msg )
 update msg modelIn =
     let model = collectClicks msg modelIn -- Fungible. For debugging.
         s = get model.currentScene model.scenes in
-    case s of
-        Nothing -> Debug.log "No scene..." (model, Cmd.none)
-        Just scene -> (updateWithScene msg model scene, Cmd.none)
-
--- TODO: Move State out via action and declare victory over abstraction                      
-updateWithScene : Msg -> State -> Scene -> State                      
-updateWithScene msg model scene = 
-    let char = model.character in
     case msg of
-        Key p -> if p == toCode 'd'
+        Key p -> (if p == toCode 'd'
                   then { model | debug = not model.debug }
                   else if p == toCode 'f'
                        then Debug.log (debugField model) model
-                       else model
-        Tick delta ->
-            let (newChar, action) = walk char delta -- In the future, maybe things can happen other ways... ie ambient timers or animations
-                newState = { model | character = newChar }
-            in case action of
-                   Nothing -> newState
-                   Just a -> doAction a newState
+                       else model, Cmd.none)
+        -- really, Key should be in a separate type...
+        _ -> case s of
+                 Nothing -> Debug.log "No scene..." (model, Cmd.none)
+                 Just scene ->
+                     let (newChar, act) = updateWithScene msg model.character scene
+                         newModel = { model | character = newChar }
+                     in (maybe newModel (doAction newModel) act, Cmd.none)
+
+-- So far there are really only three things that happen here, either:
+-- a) Character get a plan to do something (walk and/or take an action)
+-- b) Character takes an action (that may effect just about anything)
+-- c) Character walks a little bit
+-- So this is limited to the character and scene for now, actions happening externally.
+-- All of this needs moved into helpers like 'walk'
+updateWithScene : Msg -> Character -> Scene -> (Character, Maybe Action)
+updateWithScene msg char scene = 
+    case msg of
+        Key _ -> (char, Nothing) -- Shouldn't be here. Need to refactor Key
+        Tick delta -> walk char delta
         ExitClick x y ->
             case findExit scene.exits (clickPos x y) of
-                Nothing -> Debug.log "Bad exit click?" model
+                Nothing -> Debug.log "Bad exit click?" (char, Nothing)
                 Just exit ->
                     let ps = walkOneX char.pos scene.playfields exit.position
                         newState = case ps of
                                        Nothing -> Debug.log "Failed exit click..." Still
                                        Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
-                    in { model | character = { char | state = newState } }
+                    in ({ char | state = newState }, Nothing)
         FloorClick x y ->
             let newState = 
                     case walkOneX char.pos scene.playfields (clickPos x y)
                     of
                         Nothing -> Still
                         Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
-            in { model | character = { char | state = newState } }
+            in ({ char | state = newState }, Nothing)
         ItemLocationClick k x y ->
-            get k scene.itemLocations |> maybe model
+            get k scene.itemLocations |> maybe (char, Nothing)
                 (\itemLoc ->
                      let newState = 
                      case walkOneX char.pos scene.playfields itemLoc.collectPoint
@@ -228,15 +110,14 @@ updateWithScene msg model scene =
                          Nothing -> Debug.log "Failure routing to item location" Still
                          Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle)
                          <| UseItemLocation k
-                     in { model | character = { char | state = newState } })
-            
-        StrayClick _ _ -> model
+                     in ({ char | state = newState }, Nothing))
+        StrayClick _ _ -> (char, Nothing)
 
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)        
 
-doAction : Action -> State -> State
-doAction action model =
+doAction : State -> Action -> State
+doAction model action =
     case action of
         None -> model
         UseItemLocation itemKey ->
@@ -307,7 +188,7 @@ distanceFrom : Pos -> Pos -> Float
 distanceFrom p1 p2 = sqrt ((p1.x - p2.x) ^ 2 + (p1.y - p2.y) ^ 2)
 
 -- Character's new position, and whether the character stopped on an exit                     
-walk : Character -> Float -> (Character, Maybe Action)
+walk : Character -> Time -> (Character, Maybe Action)
 walk char delta =
     case char.state of
         Still -> (char, Nothing)
@@ -399,7 +280,11 @@ view model =
   let s = get model.currentScene model.scenes in
   case s of
       Nothing -> text "No scene, very bad error."
-      Just scene -> renderScene scene model.character model.debug
+      Just scene ->
+          div []
+              [ renderScene scene model.character model.debug
+              , viewInventory model.character.inventory
+              ]
 
 renderScene : Scene -> Character -> Bool -> Html Msg                    
 renderScene scene char debug =
@@ -422,7 +307,6 @@ renderScene scene char debug =
       , div [] (List.map (clickField identity (always FloorClick) (always "crosshair")) scene.playfields)
       , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) scene.exits)
       , div [] (List.map (clickField (.field << second) (ItemLocationClick << first) (always "move")) (toList scene.itemLocations))
-      , viewInventory char.inventory
       ]
 
 viewInventory : List Item -> Html Msg
