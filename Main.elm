@@ -101,7 +101,7 @@ updateWithScene : Msg -> Character -> Scene -> Result String (Character, Maybe A
 updateWithScene msg char scene =
     case msg of
         Key _ -> Err "Key shoudldn't be here (TODO)"
-        Tick delta -> walk char delta
+        Tick delta -> Ok <| walk char delta
         ExitClick x y -> -- In theory this is a bit easier than the alternatives
             findExit scene.exits (clickPos x y)
                 |> andThen (\exit -> walkOneX char.pos scene.playfields exit.position
@@ -125,29 +125,21 @@ maybe def f m = withDefault def (Maybe.map f m)
 
 doAction : State -> Action -> Result String State
 doAction model action =
-    Ok <| 
     case action of
-        None -> model
+        None -> Ok model
         UseItemLocation itemKey ->
-            -- This isn't much or any better than chaining andThen >_<
-            get model.currentScene model.scenes |> maybe model
-                (\scene -> get itemKey scene.itemLocations |> maybe model
-                     (\itemLoc -> 
-                          case itemLoc.contents of
-                              Nothing -> putItemIn itemKey model
-                              Just i -> grabItemFrom i itemKey itemLoc model))
+            expectIn model.scenes model.currentScene
+                |> andThen (\scene -> expectIn scene.itemLocations itemKey)
+                |> Result.map (\itemLoc -> itemLoc.contents |> maybe
+                                   (putItemIn itemKey model)
+                                   (\i -> grabItemFrom i itemKey itemLoc model))
         Leave exit ->
-            let s = get exit.destination model.scenes in
-            case s of
-                Nothing -> Debug.log "No scene (doAction)..." model
-                Just scene ->
-                    let spawn = List.head <| List.drop exit.destinationSpawn scene.entrance
-                        char = model.character 
-                    in case spawn of 
-                           Just spawn ->
-                               { model | currentScene = exit.destination
-                               , character = { char | pos = spawn } } -- TODO: Position character...
-                           _ -> Debug.log "Missing scene" model
+            expectIn model.scenes exit.destination
+                |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
+                                      <| List.head <| List.drop exit.destinationSpawn scene.entrance)
+                |> Result.map (\spawn -> let char = model.character
+                                         in { model | currentScene = exit.destination
+                                            , character = { char | pos = spawn } })
 
 -- This is excruciating
 -- Afterwards, the item location is emptied in its slot, and the character has the item in head of inventory
@@ -195,13 +187,13 @@ directionFrom p1 p2 = let dx = p2.x - p1.x
 distanceFrom : Pos -> Pos -> Float
 distanceFrom p1 p2 = sqrt ((p1.x - p2.x) ^ 2 + (p1.y - p2.y) ^ 2)
 
--- Character's new position, and whether the character stopped on an exit                     
-walk : Character -> Time -> Result String (Character, Maybe Action)
+-- Character's new position, and whether the character stopped on an exit
+walk : Character -> Time -> (Character, Maybe Action)
 walk char delta =
         case char.state of
-        Still -> Ok (char, Nothing)
+        Still -> (char, Nothing)
         -- No more movement to do, hold still
-        MovingTo [] _ a -> Ok ({ char | state = Still }, Just a)
+        MovingTo [] _ a -> ({ char | state = Still }, Just a)
         -- Move toward dest at char.speed
         MovingTo (dest :: rest) anim action ->
             -- Do some fairly bad math to move (delta * char.speed) towards destination
@@ -215,10 +207,10 @@ walk char delta =
                       , facing = newFacing } delta -- Give away some movement here instead of bothering to chop up delta
             else
                 let dir = directionFrom char.pos dest
-                in Ok ({ char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
-                       , state = MovingTo (dest :: rest) (advanceAnim anim delta) action
-                       , facing = newFacing
-                       }, Nothing)
+                in ({ char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
+                    , state = MovingTo (dest :: rest) (advanceAnim anim delta) action
+                    , facing = newFacing
+                    }, Nothing)
 
 -- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
 advanceAnim : InAnimation -> Time -> InAnimation
@@ -238,20 +230,15 @@ advanceAnim a delta =
 -- Next attempt should use BFS^wtree-spanning
 walkOneX : Pos -> List Playfield -> Pos -> Result String (List Pos)
 walkOneX sourceP playfields p =
-    let srcPlayfield = findPlayfield playfields sourceP
-        -- Really we could get dest through click events but that's no fun
-        destPlayfield = findPlayfield playfields p
-    in
-    case (srcPlayfield, destPlayfield, srcPlayfield == destPlayfield) of
-        (Just src, Just dest, True) -> Ok [p]
-        (Just src, Just dest, False) ->
-            case middleOfX src dest of
-                Just firstX -> Ok [firstX, p]
-                _ -> Err "No middleOfX" -- We'll be getting this until I fix routing
-        _ -> Err "No src or no dest" -- When a click or the character is outside any known field...
+    Result.map2 (,) (findPlayfield playfields sourceP) (findPlayfield playfields p)
+        |> andThen (\(src, dest) ->
+                        if src == dest
+                        then Ok [p]
+                        else middleOfX src dest |> Result.map (\firstX -> [firstX, p]))
                      
-findPlayfield : List Playfield -> Pos -> Maybe Playfield
-findPlayfield fields pos = List.head <| List.filter (pointInPlayfield pos) fields
+findPlayfield : List Playfield -> Pos -> Result String Playfield
+findPlayfield fields pos = Result.fromMaybe "Can't find pos in playfield"
+                           <| List.head <| List.filter (pointInPlayfield pos) fields
 
 -- expectAt and expectIn are different ways round. It's bad.
 -- Should just toss the lists and use Dict, but I have too much brain load right now                           
@@ -270,7 +257,7 @@ pointInPlayfield p field =
         && p.y <= field.y + field.height
 
 -- Middle of intersection of two fields, or Nothing if not intersecting
-middleOfX : Playfield -> Playfield -> Maybe Pos
+middleOfX : Playfield -> Playfield -> Result String Pos
 middleOfX f1 f2 =
     let f1right = f1.x + f1.width
         f1bottom = f1.y + f1.height
@@ -282,8 +269,8 @@ middleOfX f1 f2 =
            b = min f1bottom f2bottom
        in
            if l <= r && t <= b
-           then Just <| Pos ((l + r) / 2) ((t + b) / 2)
-           else Nothing
+           then Ok <| Pos ((l + r) / 2) ((t + b) / 2)
+           else Err "No intersection between fields"
 
 -- Render a background image and character
 -- Optionally render some debug geometry...
