@@ -6,9 +6,10 @@ import AnimationFrame exposing (diffs)
 import Json.Decode as Json
 import Keyboard exposing (KeyCode, presses)
 import Char exposing (toCode)
-import Maybe exposing (andThen, withDefault)
+import Maybe exposing (withDefault)
 import Dict exposing (Dict, fromList, toList, get, values)
 import Tuple exposing (first, second)
+import Result exposing (Result, andThen)
 
 import GameState exposing (..)
 
@@ -16,6 +17,16 @@ import DemoLevel exposing (demoState)
 
 main : Program Never State Msg
 main = Html.program { init = (demoState, Cmd.none), view = view, update = update, subscriptions = subscriptions }
+
+-- The bulk of the code divides up about five/six ways:
+-- Types, mostly game/planning state
+-- Demo data (three scenes)
+-- update & debug
+-- updateWithScene (except walk) & primitives
+-- walk & primitives
+-- doAction & primitives
+
+-- In-progress movement from Maybe and error-free errors to Result String x...
 
 -- Much later we might need ticks always or more of the time...
 -- For now I just don't want the extra history in reactor
@@ -55,69 +66,66 @@ debugField model =
                          toString (Playfield (p2.x - p1.x) (p2.y - p1.y) p1.x p1.y)
         _ -> "No dice"
 
--- In the near future, split in-game actions from debugging ones and handle separately... 
+-- Start clearing out the Maybe thicket...             
+expectIn : Dict comparable v -> comparable -> Result String v
+expectIn dict k = Result.fromMaybe ("Missing expected value for key " ++ toString k)
+                  <| get k dict
+
+-- In the near future, split in-game actions from debugging/menu/whatever and handle separately... 
 update : Msg -> State -> ( State, Cmd Msg )
 update msg modelIn =
-    let model = collectClicks msg modelIn -- Fungible. For debugging.
-        s = get model.currentScene model.scenes in
+    let model = collectClicks msg modelIn in -- Fungible. For debugging.
+    let res =
     case msg of
-        Key p -> (if p == toCode 'd'
-                  then { model | debug = not model.debug }
+        Key p -> if p == toCode 'd'
+                  then Ok { model | debug = not model.debug }
                   else if p == toCode 'f'
-                       then Debug.log (debugField model) model
-                       else model, Cmd.none)
-        -- really, Key should be in a separate type...
-        _ -> case s of
-                 Nothing -> Debug.log "No scene..." (model, Cmd.none)
-                 Just scene ->
-                     let (newChar, act) = updateWithScene msg model.character scene
-                         newModel = { model | character = newChar }
-                     in (maybe newModel (doAction newModel) act, Cmd.none)
+                       then Ok <| Debug.log (debugField model) model
+                       else Err "Unknown keystroke"
+        _ -> expectIn model.scenes model.currentScene
+                |> andThen (\scene -> updateWithScene msg model.character scene) 
+                |> Result.map (\(newChar, act) -> ({ model | character = newChar }, act))
+                |> andThen (\(newModel, act) -> maybe (Ok newModel) (doAction newModel) act)
+                   
+    in case res of
+           Err err -> Debug.log ("Error updating: " ++ err) (model, Cmd.none)
+           Ok m -> (m, Cmd.none)
 
 -- So far there are really only three things that happen here, either:
 -- a) Character get a plan to do something (walk and/or take an action)
 -- b) Character takes an action (that may effect just about anything)
 -- c) Character walks a little bit
--- So this is limited to the character and scene for now, actions happening externally.
--- All of this needs moved into helpers like 'walk'
-updateWithScene : Msg -> Character -> Scene -> (Character, Maybe Action)
-updateWithScene msg char scene = 
+-- So this is limited to the character and scene for now, and actions happen outside.
+-- In fact Action could subsume character movement and this would get a lot cleaner.
+updateWithScene : Msg -> Character -> Scene -> Result String (Character, Maybe Action)
+updateWithScene msg char scene =
     case msg of
-        Key _ -> (char, Nothing) -- Shouldn't be here. Need to refactor Key
+        Key _ -> Err "Key shoudldn't be here (TODO)"
         Tick delta -> walk char delta
-        ExitClick x y ->
-            case findExit scene.exits (clickPos x y) of
-                Nothing -> Debug.log "Bad exit click?" (char, Nothing)
-                Just exit ->
-                    let ps = walkOneX char.pos scene.playfields exit.position
-                        newState = case ps of
-                                       Nothing -> Debug.log "Failed exit click..." Still
-                                       Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
-                    in ({ char | state = newState }, Nothing)
+        ExitClick x y -> -- In theory this is a bit easier than the alternatives
+            findExit scene.exits (clickPos x y)
+                |> andThen (\exit -> walkOneX char.pos scene.playfields exit.position
+                                -- \ps -> ... could move outside.
+                           |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
+                                                 in ({ char | state = newState }, Nothing)))
         FloorClick x y ->
-            let newState = 
-                    case walkOneX char.pos scene.playfields (clickPos x y)
-                    of
-                        Nothing -> Still
-                        Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
-            in ({ char | state = newState }, Nothing)
+            walkOneX char.pos scene.playfields (clickPos x y)
+                |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
+                                      in ({ char | state = newState }, Nothing))
         ItemLocationClick k x y ->
-            get k scene.itemLocations |> maybe (char, Nothing)
-                (\itemLoc ->
-                     let newState = 
-                     case walkOneX char.pos scene.playfields itemLoc.collectPoint
-                     of
-                         Nothing -> Debug.log "Failure routing to item location" Still
-                         Just ps -> MovingTo ps (InAnimation char.walkCycle char.walkCycle)
-                         <| UseItemLocation k
-                     in ({ char | state = newState }, Nothing))
-        StrayClick _ _ -> (char, Nothing)
+            expectIn scene.itemLocations k
+                |> andThen (\itemLoc -> walkOneX char.pos scene.playfields itemLoc.collectPoint)
+                |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle)
+                                                     <| UseItemLocation k
+                                      in ({ char | state = newState }, Nothing))
+        StrayClick _ _ -> Err "Can't do anything with a stray click. (This is okay.)"
 
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)        
 
-doAction : State -> Action -> State
+doAction : State -> Action -> Result String State
 doAction model action =
+    Ok <| 
     case action of
         None -> model
         UseItemLocation itemKey ->
@@ -151,7 +159,7 @@ grabItemFrom item itemKey itemLoc model =
     }
 
 -- Character loses left-most item (for now)
--- leftmost item goes into itemLocationx
+-- leftmost item goes into itemLocation
 putItemIn : String -> State -> State
 putItemIn itemKey s =
     let char = s.character in
@@ -188,12 +196,12 @@ distanceFrom : Pos -> Pos -> Float
 distanceFrom p1 p2 = sqrt ((p1.x - p2.x) ^ 2 + (p1.y - p2.y) ^ 2)
 
 -- Character's new position, and whether the character stopped on an exit                     
-walk : Character -> Time -> (Character, Maybe Action)
+walk : Character -> Time -> Result String (Character, Maybe Action)
 walk char delta =
-    case char.state of
-        Still -> (char, Nothing)
+        case char.state of
+        Still -> Ok (char, Nothing)
         -- No more movement to do, hold still
-        MovingTo [] _ a -> ({ char | state = Still }, Just a)
+        MovingTo [] _ a -> Ok ({ char | state = Still }, Just a)
         -- Move toward dest at char.speed
         MovingTo (dest :: rest) anim action ->
             -- Do some fairly bad math to move (delta * char.speed) towards destination
@@ -207,10 +215,10 @@ walk char delta =
                       , facing = newFacing } delta -- Give away some movement here instead of bothering to chop up delta
             else
                 let dir = directionFrom char.pos dest
-                in ({ char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
-                    , state = MovingTo (dest :: rest) (advanceAnim anim delta) action
-                    , facing = newFacing
-                    }, Nothing)
+                in Ok ({ char | pos = Pos (char.pos.x + maxDistance * dir.x) (char.pos.y + maxDistance * dir.y)
+                       , state = MovingTo (dest :: rest) (advanceAnim anim delta) action
+                       , facing = newFacing
+                       }, Nothing)
 
 -- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
 advanceAnim : InAnimation -> Time -> InAnimation
@@ -228,25 +236,31 @@ advanceAnim a delta =
 
 -- First attempt at 'pathfinding' - keep just the field list, route through max of one "intersection" by force
 -- Next attempt should use BFS^wtree-spanning
-walkOneX : Pos -> List Playfield -> Pos -> Maybe (List Pos)
+walkOneX : Pos -> List Playfield -> Pos -> Result String (List Pos)
 walkOneX sourceP playfields p =
     let srcPlayfield = findPlayfield playfields sourceP
         -- Really we could get dest through click events but that's no fun
         destPlayfield = findPlayfield playfields p
     in
     case (srcPlayfield, destPlayfield, srcPlayfield == destPlayfield) of
-        (Just src, Just dest, True) -> Just [p]
+        (Just src, Just dest, True) -> Ok [p]
         (Just src, Just dest, False) ->
             case middleOfX src dest of
-                Just firstX -> Just [firstX, p]
-                _ -> Debug.log "No middleOfX" Nothing -- We'll be getting this until I fix routing
-        _ -> Debug.log "No src or no dest" Nothing -- When a click or the character is outside any known field...
+                Just firstX -> Ok [firstX, p]
+                _ -> Err "No middleOfX" -- We'll be getting this until I fix routing
+        _ -> Err "No src or no dest" -- When a click or the character is outside any known field...
                      
 findPlayfield : List Playfield -> Pos -> Maybe Playfield
 findPlayfield fields pos = List.head <| List.filter (pointInPlayfield pos) fields
 
-findExit : List Exit -> Pos -> Maybe Exit
-findExit exits pos = List.head <| List.filter (pointInPlayfield pos << .field) exits
+-- expectAt and expectIn are different ways round. It's bad.
+-- Should just toss the lists and use Dict, but I have too much brain load right now                           
+expectAt : (a -> Bool) -> List a -> Result String a
+expectAt f l = Result.fromMaybe ("Expected to find item in " ++ toString l)
+                <| List.head <| List.filter f l
+
+findExit : List Exit -> Pos -> Result String Exit
+findExit exits pos = expectAt (pointInPlayfield pos << .field) exits
 
 pointInPlayfield : Pos -> Playfield -> Bool
 pointInPlayfield p field =
