@@ -6,9 +6,12 @@ import Time exposing (Time)
 -- Positions and units are screen pixels
 type alias Pos = { x: Float, y: Float }
 
+-- A bunch of dictionaries/lists are expected to remain the same (or only grow) at least during action sequences.
+-- Will mark those items with a "**" I guess
+
 type alias State = { character : Character
-                   , currentScene : String
-                   , scenes : Dict String Scene
+                   , currentScene : String 
+                   , scenes : Dict String Scene -- **
                    , debug : Bool
                    , clickData : List Pos -- For random debugging/design purposes...
                    }
@@ -30,15 +33,6 @@ type alias Item = { width : Float
                   , name : String -- Possibly debug-only...
                   }
 
--- General purpose on-screen item location...
--- Might be re-usable for inventory...
--- For now, any item can be put "anywhere"...
--- Later, some items will be pick-up only, fit specific item types, etc.
-type alias ItemLocation = { field : Playfield
-                          , contents : Maybe Item
-                          , collectPoint : Pos -- Point to walk to before interacting, should be in a field
-                          }
-
 type Facing = Left | Right    
 
 -- MovingTo - multi-segment movement plan
@@ -48,6 +42,7 @@ type CharState = Still
 type Action = None
             | Leave Exit
             | UseItemLocation String
+            | UseUsable String
 
 type alias AnimCycle = List (String, Time)
 
@@ -60,11 +55,29 @@ type alias InAnimation = { segments : AnimCycle
 type alias Cursor = String    
 
 type alias Scene = { image : String
-                   , playfields : List Playfield
-                   , entrance : List Pos
-                   , exits : List Exit
-                   , itemLocations : Dict String ItemLocation
+                   , playfields : List Playfield -- **
+                   , entrance : List Pos -- **
+                   , exits : List Exit -- **
+                   , itemLocations : Dict String ItemLocation -- **
+                   , usables : Dict String Usable -- ** Someday this and itemLocations (and maybe exits and walkables) will move together...
                    }
+
+-- General purpose on-screen item location...
+-- Might be re-usable for inventory...
+-- For now, any item can be put "anywhere"...
+-- Later, some items will be pick-up only, fit specific item types, etc.
+type alias ItemLocation = { field : Playfield
+                          , contents : Maybe Item
+                          , collectPoint : Pos -- Point to walk to before interacting, should be in a field
+                          }
+
+type alias Usable = { field : Playfield
+                    , event : GameEvent
+                    , usePoint : Pos
+                    , img : String -- Probably changeable...
+                    }
+
+type GameEvent = NoEvent
 
 -- Playfield segment rectangle
 -- Needs to be called something else...

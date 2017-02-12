@@ -42,6 +42,7 @@ type Msg = Tick Time
          | ExitClick Pos
          | StrayClick Pos -- Debugging...
          | ItemLocationClick String Pos
+         | UsableClick String Pos
          | Key KeyCode
 
 -- Non-essential stuff for debugging and fudging level elements
@@ -57,6 +58,7 @@ collectClicks msg modelIn =
         ExitClick pos -> addClick pos modelIn
         FloorClick pos -> addClick pos modelIn
         StrayClick pos -> addClick pos modelIn
+        UsableClick _ pos -> addClick pos modelIn
         _ -> modelIn
 
 debugField : State -> String             
@@ -104,21 +106,21 @@ updateWithScene msg char scene =
         Tick delta -> Ok <| walk char delta
         ExitClick pos -> -- In theory this is a bit easier than the alternatives
             findExit scene.exits pos
-                |> andThen (\exit -> walkOneX char.pos scene.playfields exit.position
-                                -- \ps -> ... could move outside.
-                           |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
-                                                 in ({ char | state = newState }, Nothing)))
-        FloorClick pos ->
-            walkOneX char.pos scene.playfields pos
-                |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
-                                      in ({ char | state = newState }, Nothing))
+                |> andThen (\exit -> planWalk char scene (Leave exit) exit.position)
+        FloorClick pos -> planWalk char scene None pos
         ItemLocationClick k _ ->
             expectIn scene.itemLocations k
-                |> andThen (\itemLoc -> walkOneX char.pos scene.playfields itemLoc.collectPoint)
-                |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle)
-                                                     <| UseItemLocation k
-                                      in ({ char | state = newState }, Nothing))
+                |> andThen (planWalk char scene (UseItemLocation k) << .collectPoint)
+        UsableClick k _ -> expectIn scene.usables k
+                        |> andThen (planWalk char scene (UseUsable k) << .usePoint)
         StrayClick _ -> Err "Can't do anything with a stray click. (This is okay.)"
+
+planWalk : Character -> Scene -> Action -> Pos -> Result String (Character, Maybe a)
+planWalk char scene action pos =
+    walkOneX char.pos scene.playfields pos
+        |> Result.map (\ps ->
+                           let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) action
+                           in ({ char | state = newState }, Nothing))
 
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)        
@@ -133,6 +135,10 @@ doAction model action =
                 |> Result.map (\itemLoc -> itemLoc.contents |> maybe
                                    (putItemIn itemKey model)
                                    (\i -> grabItemFrom i itemKey itemLoc model))
+        UseUsable useKey ->
+            expectIn model.scenes model.currentScene
+                |> andThen (\scene -> expectIn scene.usables useKey)
+                |> andThen (\usable -> doEvent model usable.event)
         Leave exit ->
             expectIn model.scenes exit.destination
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
@@ -140,6 +146,14 @@ doAction model action =
                 |> Result.map (\spawn -> let char = model.character
                                          in { model | currentScene = exit.destination
                                             , character = { char | pos = spawn } })
+
+-- Action is something that happens at the end of a walk as a result of a click...
+-- The distinction from Event may prove non-meaningful.
+-- Events should be able to "stop the world" for animations.
+doEvent : State -> GameEvent -> Result String State
+doEvent s ev =
+    case ev of
+        NoEvent -> Debug.log "No event successfully happened." "Okey-dokey" |> always (Ok s)
 
 -- This is excruciating
 -- Afterwards, the item location is emptied in its slot, and the character has the item in head of inventory
@@ -300,14 +314,18 @@ renderScene scene char debug =
                     ++ (List.map (viewDebugField "green" << .field) scene.exits)
                     ++ (List.map (viewDebugPos "e" << .position) scene.exits)
                     ++ (List.map (viewDebugPos "i" << .collectPoint) (values scene.itemLocations))
-                    ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations)) else [])
+                    ++ (List.map (viewDebugPos "u" << .usePoint) (values scene.usables))
+                    ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations))
+                    ++ (List.map (viewDebugField "orange" << .field) (values scene.usables)) else [])
       , div [] (List.map viewItemLocation (values scene.itemLocations))
+      , div [] (List.map viewUsable (values scene.usables))
       , viewChar char
       , div [] (if debug then [viewDebugPos "C" char.pos] else [])
       -- These need to be "on top". This is not really a good solution.
       , div [] (List.map (clickField identity (always FloorClick) (always "crosshair")) scene.playfields)
       , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) scene.exits)
       , div [] (List.map (clickField (.field << second) (ItemLocationClick << first) (always "move")) (toList scene.itemLocations))
+      , div [] (List.map (clickField (.field << second) (UsableClick << first) (always "move")) (toList scene.usables))
       ]
 
 viewInventory : List Item -> Html Msg
@@ -333,6 +351,14 @@ viewItemLocation itemLoc =
                          , ("top", toString itemLoc.field.y ++ "px") -- fudge fudge
                          , ("left", toString itemLoc.field.x ++ "px")
                          ] ] [ img [src ("img/" ++ item.img ++ ".png"), style [ ("width", toString item.width ++ "px" ) ] ] [] ]
+
+viewUsable : Usable -> Html Msg
+viewUsable u = div [ style [ ("height", toString u.field.height ++ "px")
+                           , ("width", toString u.field.width ++ "px")
+                           , ("position", "absolute")
+                           , ("top", toString u.field.y ++ "px") -- fudge fudge
+                           , ("left", toString u.field.x ++ "px")
+                           ] ] [ img [src ("img/" ++ u.img ++ ".png"), style [ ("width", toString u.field.width ++ "px" ) ] ] [] ]
             
 selfish : Options
 selfish = Options True True

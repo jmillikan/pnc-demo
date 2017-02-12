@@ -19,6 +19,7 @@ demoScene = Scene
             [Exit (Playfield 100 300 1250 150) (Pos 1275 400) "east" 0 "e-resize"
             ,Exit (Playfield 100 300 0 80) (Pos 50 330) "west" 0 "w-resize"]
             (fromList [])
+            (fromList [("demo-lever", Usable (Playfield 170 170 300 300) NoEvent (Pos 250 350) "lever-left")])
 
 scene2 : Scene
 scene2 = Scene
@@ -26,6 +27,7 @@ scene2 = Scene
          [Playfield 200 100 0 150, Playfield 800 500 130 100]
          [Pos 50 200]
          [Exit (Playfield 70 200 0 50) (Pos 50 200) "middle" 0 "w-resize"]
+         (fromList [])
          (fromList [])
 
 scene3 : Scene
@@ -47,6 +49,7 @@ scene3 = Scene
                           (Just (Item 100 140 "tile-3" "This tile says three."))
                           (Pos 900 380))
          ])
+         (fromList [])
 
 scenes : List Scene
 scenes = [demoScene, scene2, scene3]
