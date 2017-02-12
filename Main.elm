@@ -38,10 +38,10 @@ subscriptions model = Sub.batch [ presses Key
                                 ]
 
 type Msg = Tick Time
-         | FloorClick Int Int
-         | ExitClick Int Int
-         | StrayClick Int Int -- Debugging...
-         | ItemLocationClick String Int Int
+         | FloorClick Pos
+         | ExitClick Pos
+         | StrayClick Pos -- Debugging...
+         | ItemLocationClick String Pos
          | Key KeyCode
 
 -- Non-essential stuff for debugging and fudging level elements
@@ -54,9 +54,9 @@ clickPos x y = Pos (toFloat x) (toFloat y)
 collectClicks : Msg -> State -> State               
 collectClicks msg modelIn =
     case msg of
-        ExitClick x y -> addClick (clickPos x y) modelIn
-        FloorClick x y -> addClick (clickPos x y) modelIn
-        StrayClick x y -> addClick (clickPos x y) modelIn
+        ExitClick pos -> addClick pos modelIn
+        FloorClick pos -> addClick pos modelIn
+        StrayClick pos -> addClick pos modelIn
         _ -> modelIn
 
 debugField : State -> String             
@@ -102,23 +102,23 @@ updateWithScene msg char scene =
     case msg of
         Key _ -> Err "Key shoudldn't be here (TODO)"
         Tick delta -> Ok <| walk char delta
-        ExitClick x y -> -- In theory this is a bit easier than the alternatives
-            findExit scene.exits (clickPos x y)
+        ExitClick pos -> -- In theory this is a bit easier than the alternatives
+            findExit scene.exits pos
                 |> andThen (\exit -> walkOneX char.pos scene.playfields exit.position
                                 -- \ps -> ... could move outside.
                            |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) (Leave exit)
                                                  in ({ char | state = newState }, Nothing)))
-        FloorClick x y ->
-            walkOneX char.pos scene.playfields (clickPos x y)
+        FloorClick pos ->
+            walkOneX char.pos scene.playfields pos
                 |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) None
                                       in ({ char | state = newState }, Nothing))
-        ItemLocationClick k x y ->
+        ItemLocationClick k _ ->
             expectIn scene.itemLocations k
                 |> andThen (\itemLoc -> walkOneX char.pos scene.playfields itemLoc.collectPoint)
                 |> Result.map (\ps -> let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle)
                                                      <| UseItemLocation k
                                       in ({ char | state = newState }, Nothing))
-        StrayClick _ _ -> Err "Can't do anything with a stray click. (This is okay.)"
+        StrayClick _ -> Err "Can't do anything with a stray click. (This is okay.)"
 
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)        
@@ -320,8 +320,7 @@ viewInventory items =
         (List.map viewInvItem items)
 
 viewInvItem : Item -> Html Msg
-viewInvItem item =
-    img [ src <| "img/" ++ item.img ++ ".png" ] []
+viewInvItem item = img [ src <| "img/" ++ item.img ++ ".png" ] []
 
 viewItemLocation : ItemLocation -> Html Msg
 viewItemLocation itemLoc =
@@ -339,11 +338,11 @@ selfish : Options
 selfish = Options True True
 
 -- https://github.com/fredcy/elm-svg-mouse-offset/blob/master/Main.elm    
-offsetPosition : (Int -> Int -> Msg) -> Json.Decoder Msg
-offsetPosition msg = Json.map2 msg (Json.field "pageX" Json.int) (Json.field "pageY" Json.int)
+offsetPosition : (Pos -> Msg) -> Json.Decoder Msg
+offsetPosition msg = Json.map2 (((<<) << (<<)) msg clickPos) (Json.field "pageX" Json.int) (Json.field "pageY" Json.int)
 
 -- A lot of overlap with viewDebugField...                     
-clickField : (a -> Playfield) -> (a -> Int -> Int -> Msg) -> (a -> Cursor) -> a -> Html Msg
+clickField : (a -> Playfield) -> (a -> Pos -> Msg) -> (a -> Cursor) -> a -> Html Msg
 clickField f m cur e = div [ style [ ("height", toString (f e).height ++ "px")
                                    , ("width", toString (f e).width ++ "px")
                                    , ("position", "absolute")
@@ -364,10 +363,7 @@ viewChar c = div [ style [ ("height", toString c.height ++ "px")
 pose : Character -> String
 pose c = case c.state of
              Still -> "s"
-             MovingTo _ a _ ->
-                 case a.current of
-                     (p, _) :: _ -> p
-                     _ -> "1"
+             MovingTo _ a _ -> List.head a.current |> maybe "1" first
                                
 face : Character -> String
 face c = case c.facing of
