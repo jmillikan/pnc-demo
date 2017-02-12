@@ -11,7 +11,7 @@ type alias Pos = { x: Float, y: Float }
 
 type GameState = Menu
                | Interact World -- We're playing
-               | Animate CutScene World
+               | Animate GameAnimation World
 
 type alias World = { character : Character
                    , currentScene : String 
@@ -81,7 +81,14 @@ type alias Usable = { field : Playfield
                     , img : String -- Probably changeable...
                     }
 
+-- A single demonstratory animation from an action
+-- This is not *remotely* a good way to do this
+
 type GameEvent = NoEvent
+               | AnimateUsable String Float AnimCycle
+
+type GameAnimation =
+    AnimationUsable String Float InAnimation String
 
 -- Playfield segment rectangle
 -- Needs to be called something else...
@@ -97,6 +104,3 @@ type alias Exit = { field : Playfield
                   , destinationSpawn : Int
                   , cursor : String -- hack hack hack
                   }
-
-type CutScene =
-    TrappedForever -- oh noez

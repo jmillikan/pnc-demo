@@ -19,7 +19,10 @@ demoScene = Scene
             [Exit (Playfield 100 300 1250 150) (Pos 1275 400) "east" 0 "e-resize"
             ,Exit (Playfield 100 300 0 80) (Pos 50 330) "west" 0 "w-resize"]
             (fromList [])
-            (fromList [("demo-lever", Usable (Playfield 170 170 300 300) NoEvent (Pos 250 350) "lever-left")])
+            (fromList [("demo-lever", Usable
+                            (Playfield 170 170 300 300)
+                            (AnimateUsable "demo-lever" (4000 * millisecond) [("lever-left1", 500 * millisecond), ("lever-left2", 500 * millisecond)])
+                            (Pos 250 350) "lever-left")])
 
 scene2 : Scene
 scene2 = Scene

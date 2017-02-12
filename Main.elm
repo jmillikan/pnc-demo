@@ -1,19 +1,17 @@
-import Html exposing (Html, button, div, img, text)
-import Html.Events exposing (onClick, onWithOptions, Options)
-import Html.Attributes exposing (style, src)
-import Time exposing (Time, millisecond)
 import AnimationFrame exposing (diffs)
+import Char exposing (toCode)
+import DemoLevel exposing (demoState)
+import Dict exposing (Dict, fromList, toList, get, values)
+import GameState exposing (..)
+import Html exposing (Html, button, div, img, text)
+import Html.Attributes exposing (style, src)
+import Html.Events exposing (onClick, onWithOptions, Options)
 import Json.Decode as Json
 import Keyboard exposing (KeyCode, presses)
-import Char exposing (toCode)
 import Maybe exposing (withDefault)
-import Dict exposing (Dict, fromList, toList, get, values)
-import Tuple exposing (first, second)
 import Result exposing (Result, andThen)
-
-import GameState exposing (..)
-
-import DemoLevel exposing (demoState)
+import Time exposing (Time, millisecond)
+import Tuple exposing (first, second)
 
 main : Program Never GameState Msg
 main = Html.program { init = (Menu, Cmd.none), view = view, update = update, subscriptions = subscriptions }
@@ -75,27 +73,34 @@ update msg state =
         Menu -> case msg of -- Click anywhere to start game...
                 StrayClick _ -> (Interact demoState, Cmd.none)
                 _ -> (state, Cmd.none)
-        Interact world -> (Interact <| updateWorld msg world, Cmd.none)
-        -- During cut scenes, literally all interactions get lost
-        Animate cutScene world -> (state, Cmd.none)
+        Interact world -> (updateWorld msg world, Cmd.none)
+        -- During cut scenes, all interactions get lost
+        Animate cutScene world ->
+            case msg of
+                Tick delta ->
+                    case runCutScene delta cutScene world of
+                        Ok newState -> (newState, Cmd.none)
+                        -- Errors in animations will probably not resolve at runtime.
+                        Err err -> Debug.log "Error" err |> always (state, Cmd.none)
+                       
+                _ -> (state, Cmd.none)
 
--- In the near future, split in-game actions from debugging/menu/whatever and handle separately... 
-updateWorld : Msg -> World -> World
+updateWorld : Msg -> World -> GameState
 updateWorld msg modelIn =
     let model = collectClicks msg modelIn in -- Fungible. For debugging.
     let res =
     case msg of
         Key p -> if p == toCode 'd'
-                  then Ok { model | debug = not model.debug }
+                  then Ok <| Interact { model | debug = not model.debug }
                   else if p == toCode 'f'
-                       then Ok <| Debug.log (debugField model) model
+                       then Ok <| Debug.log (debugField model) (Interact model)
                        else Err "Unknown keystroke"
         _ -> expectIn model.scenes model.currentScene
                 |> andThen (\scene -> updateWithScene msg model.character scene) 
                 |> Result.map (\(newChar, act) -> ({ model | character = newChar }, act))
-                |> andThen (\(newModel, act) -> maybe (Ok newModel) (doAction newModel) act)
+                |> andThen (\(newModel, act) -> maybe (Ok <| Interact newModel) (doAction newModel) act)
     in case res of
-           Err err -> Debug.log ("Error updating: " ++ err) model
+           Err err -> Debug.log ("Error updating: " ++ err) (Interact model)
            Ok m -> m
 
 -- So far there are really only three things that happen here, either:
@@ -130,37 +135,47 @@ planWalk char scene action pos =
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)        
 
-doAction : World -> Action -> Result String World
+doAction : World -> Action -> Result String GameState
 doAction model action =
     case action of
-        None -> Ok model
+        None -> Ok <| Interact model
         UseItemLocation itemKey ->
             expectIn model.scenes model.currentScene
                 |> andThen (\scene -> expectIn scene.itemLocations itemKey)
                 |> Result.map (\itemLoc -> itemLoc.contents |> maybe
                                    (putItemIn itemKey model) -- These two should be Result but I haven't gotten to it
                                    (\i -> grabItemFrom i itemKey itemLoc model))
+                |> Result.map Interact
         UseUsable useKey ->
             expectIn model.scenes model.currentScene
                 |> andThen (\scene -> expectIn scene.usables useKey)
-                |> andThen (\usable -> doEvent model usable.event)
+                |> andThen (\usable -> Debug.log "Do event" <| doEvent model usable.event)
         Leave exit ->
             expectIn model.scenes exit.destination
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
                                       <| List.head <| List.drop exit.destinationSpawn scene.entrance)
                 |> Result.map (\spawn -> let char = model.character
-                                         in { model | currentScene = exit.destination
-                                            , character = { char | pos = spawn } })
+                                         in Interact { model | currentScene = exit.destination
+                                                     , character = { char | pos = spawn } })
 
 -- Action is something that happens at the end of a walk as a result of a click...
 -- The distinction from Event may prove non-meaningful.
 -- Events should be able to "stop the world" for animations.
-doEvent : World -> GameEvent -> Result String World
+doEvent : World -> GameEvent -> Result String GameState
 doEvent s ev =
     case ev of
-        NoEvent -> Debug.log "No event successfully happened." "Okey-dokey" |> always (Ok s)
+        NoEvent -> Ok <| Interact s
+        AnimateUsable key time anim ->
+            getWorldUsableImage s key
+                |> Result.map (\oldImage ->
+                                   Animate (AnimationUsable key time (InAnimation anim anim) oldImage) s)
 
--- This is excruciating
+getWorldUsableImage : World -> String -> Result String String 
+getWorldUsableImage world key =
+    expectIn world.scenes world.currentScene
+        |> andThen (\scene -> expectIn scene.usables key)
+        |> Result.map .img
+        
 -- Afterwards, the item location is emptied in its slot, and the character has the item in head of inventory
 grabItemFrom : Item -> String -> ItemLocation -> World -> World                                
 grabItemFrom item itemKey itemLoc model =
@@ -291,6 +306,34 @@ middleOfX f1 f2 =
            then Ok <| Pos ((l + r) / 2) ((t + b) / 2)
            else Err "No intersection between fields"
 
+runCutScene : Time -> GameAnimation -> World -> Result String GameState
+runCutScene delta ev world =
+    case ev of
+        AnimationUsable key timeLeft animation doneImage ->
+            if timeLeft <= delta
+            then setWorldUsableImage world key doneImage
+                           |> Result.map Interact
+            else -- Ignore animation for now
+                let newAnim = advanceAnim animation delta 
+                in getAnimImage newAnim
+                    |> andThen (\img -> setWorldUsableImage world key img)
+                    |> Result.map (\newWorld -> Animate (AnimationUsable key (timeLeft - delta) newAnim doneImage) newWorld)
+                       
+getAnimImage : InAnimation -> Result String String
+getAnimImage anim =
+    Result.fromMaybe "Animation is empty or something"
+        <| Maybe.map first <| List.head anim.current
+
+setWorldUsableImage : World -> String -> String -> Result String World
+setWorldUsableImage world key img =
+    Ok <| let newScenes = Dict.update world.currentScene (Maybe.map <| setSceneUsableImage key img) world.scenes
+          in { world | scenes = newScenes }
+
+setSceneUsableImage : String -> String -> Scene -> Scene
+setSceneUsableImage key img scene =
+    let newUsables = Dict.update key (Maybe.map (\usable -> { usable | img = img } )) scene.usables
+    in { scene | usables = newUsables }
+
 view : GameState -> Html Msg
 view state =
     case state of
@@ -300,11 +343,12 @@ view state =
 
 viewMenu : Html Msg
 viewMenu = div [ style [ ("background-image", "url(img/menu.png)")
+                       , ("background-repeat", "no-repeat")
                        , ("width", "1400px")
                        , ("height", "700px")
                        ]
                , onWithOptions "click" selfish (offsetPosition StrayClick)
-               ] [ text "But it's actually the menu. TODO!" ]
+               ] [ ]
 
 -- Render a background image and character
 -- Optionally render some debug geometry...
@@ -321,9 +365,11 @@ viewWorld model =
               , viewInventory model.character.inventory
               ]
 
+-- TODO: z-ordering affecting at least objects (Usables, ItemLocations) and character              
+
 -- Draw a bunch of things. Stacking order is important.
 -- SVG might be better. TODO.
--- I'm not even worrying about how images are scaled or match object bounds yet.
+-- I'm not even worrying about how images are scaled or match object bounds yet
 renderScene : Scene -> Character -> Bool -> Html Msg                    
 renderScene scene char debug =
     div [ style [ ("background-image", "url(img/" ++ scene.image ++ ".png)")
