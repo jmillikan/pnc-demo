@@ -4,8 +4,8 @@ import GameState exposing (..)
 import Dict exposing (Dict, fromList)
 import Time exposing (millisecond)
 
-demoState : State
-demoState = State initChar "middle" sceneDict False []
+demoState : World
+demoState = World initChar "middle" sceneDict False []
 
 initChar : Character
 initChar = Character 120 180 (Pos 200 300) Still (0.2 / millisecond) Right [("1", 500 * millisecond), ("2", 500 * millisecond)] []

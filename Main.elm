@@ -15,29 +15,24 @@ import GameState exposing (..)
 
 import DemoLevel exposing (demoState)
 
-main : Program Never State Msg
-main = Html.program { init = (demoState, Cmd.none), view = view, update = update, subscriptions = subscriptions }
+main : Program Never GameState Msg
+main = Html.program { init = (Menu, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
 -- The bulk of the code divides up about five/six ways:
 -- Types, mostly game/planning state
--- Demo data (three scenes)
--- update & debug
--- updateWithScene (except walk) & primitives
+-- Demo data (three scenes and a bunch of objects)
+-- update & debug (except updateWithScene)
+-- updateWithScene & primitives (except walk)
 -- walk & primitives
--- doAction & primitives
+-- doAction/doEvent & primitives
 
--- In-progress movement from Maybe and error-free errors to Result String x...
-
--- Much later we might need ticks always or more of the time...
--- For now I just don't want the extra history in reactor
-subscriptions : State -> Sub Msg
+subscriptions : GameState -> Sub Msg
 subscriptions model = Sub.batch [ presses Key
-                                , case model.character.state of
-                                      Still -> Sub.none
-                                      MovingTo _ _ _ -> diffs Tick
+                                , diffs Tick
                                 ]
 
 type Msg = Tick Time
+    -- The *Click stuff will get compacted when objects are generalized
          | FloorClick Pos
          | ExitClick Pos
          | StrayClick Pos -- Debugging...
@@ -46,13 +41,13 @@ type Msg = Tick Time
          | Key KeyCode
 
 -- Non-essential stuff for debugging and fudging level elements
-addClick : Pos -> State -> State
+addClick : Pos -> World -> World
 addClick pos model = { model | clickData = pos :: model.clickData }
 
 clickPos : Int -> Int -> Pos                     
 clickPos x y = Pos (toFloat x) (toFloat y)
 
-collectClicks : Msg -> State -> State               
+collectClicks : Msg -> World -> World               
 collectClicks msg modelIn =
     case msg of
         ExitClick pos -> addClick pos modelIn
@@ -61,7 +56,7 @@ collectClicks msg modelIn =
         UsableClick _ pos -> addClick pos modelIn
         _ -> modelIn
 
-debugField : State -> String             
+debugField : World -> String             
 debugField model =
     case model.clickData of
         p2 :: p1 :: _ -> "Pos 1: " ++ toString p1 ++ "; Pos 2: " ++ toString p2 ++ "; Field: " ++
@@ -73,9 +68,20 @@ expectIn : Dict comparable v -> comparable -> Result String v
 expectIn dict k = Result.fromMaybe ("Missing expected value for key " ++ toString k)
                   <| get k dict
 
+
+update : Msg -> GameState -> ( GameState, Cmd Msg )
+update msg state =
+    case state of
+        Menu -> case msg of -- Click anywhere to start game...
+                StrayClick _ -> (Interact demoState, Cmd.none)
+                _ -> (state, Cmd.none)
+        Interact world -> (Interact <| updateWorld msg world, Cmd.none)
+        -- During cut scenes, literally all interactions get lost
+        Animate cutScene world -> (state, Cmd.none)
+
 -- In the near future, split in-game actions from debugging/menu/whatever and handle separately... 
-update : Msg -> State -> ( State, Cmd Msg )
-update msg modelIn =
+updateWorld : Msg -> World -> World
+updateWorld msg modelIn =
     let model = collectClicks msg modelIn in -- Fungible. For debugging.
     let res =
     case msg of
@@ -88,10 +94,9 @@ update msg modelIn =
                 |> andThen (\scene -> updateWithScene msg model.character scene) 
                 |> Result.map (\(newChar, act) -> ({ model | character = newChar }, act))
                 |> andThen (\(newModel, act) -> maybe (Ok newModel) (doAction newModel) act)
-                   
     in case res of
-           Err err -> Debug.log ("Error updating: " ++ err) (model, Cmd.none)
-           Ok m -> (m, Cmd.none)
+           Err err -> Debug.log ("Error updating: " ++ err) model
+           Ok m -> m
 
 -- So far there are really only three things that happen here, either:
 -- a) Character get a plan to do something (walk and/or take an action)
@@ -125,7 +130,7 @@ planWalk char scene action pos =
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)        
 
-doAction : State -> Action -> Result String State
+doAction : World -> Action -> Result String World
 doAction model action =
     case action of
         None -> Ok model
@@ -133,7 +138,7 @@ doAction model action =
             expectIn model.scenes model.currentScene
                 |> andThen (\scene -> expectIn scene.itemLocations itemKey)
                 |> Result.map (\itemLoc -> itemLoc.contents |> maybe
-                                   (putItemIn itemKey model)
+                                   (putItemIn itemKey model) -- These two should be Result but I haven't gotten to it
                                    (\i -> grabItemFrom i itemKey itemLoc model))
         UseUsable useKey ->
             expectIn model.scenes model.currentScene
@@ -150,14 +155,14 @@ doAction model action =
 -- Action is something that happens at the end of a walk as a result of a click...
 -- The distinction from Event may prove non-meaningful.
 -- Events should be able to "stop the world" for animations.
-doEvent : State -> GameEvent -> Result String State
+doEvent : World -> GameEvent -> Result String World
 doEvent s ev =
     case ev of
         NoEvent -> Debug.log "No event successfully happened." "Okey-dokey" |> always (Ok s)
 
 -- This is excruciating
 -- Afterwards, the item location is emptied in its slot, and the character has the item in head of inventory
-grabItemFrom : Item -> String -> ItemLocation -> State -> State                                
+grabItemFrom : Item -> String -> ItemLocation -> World -> World                                
 grabItemFrom item itemKey itemLoc model =
     let char = model.character in
     { model | scenes = Dict.update model.currentScene (Maybe.map <| emptySceneItemLocation itemKey) model.scenes
@@ -166,7 +171,7 @@ grabItemFrom item itemKey itemLoc model =
 
 -- Character loses left-most item (for now)
 -- leftmost item goes into itemLocation
-putItemIn : String -> State -> State
+putItemIn : String -> World -> World
 putItemIn itemKey s =
     let char = s.character in
     case char.inventory of
@@ -286,12 +291,27 @@ middleOfX f1 f2 =
            then Ok <| Pos ((l + r) / 2) ((t + b) / 2)
            else Err "No intersection between fields"
 
+view : GameState -> Html Msg
+view state =
+    case state of
+        Menu -> viewMenu
+        Interact world -> viewWorld world
+        Animate cutScene world -> viewWorld world
+
+viewMenu : Html Msg
+viewMenu = div [ style [ ("background-image", "url(img/menu.png)")
+                       , ("width", "1400px")
+                       , ("height", "700px")
+                       ]
+               , onWithOptions "click" selfish (offsetPosition StrayClick)
+               ] [ text "But it's actually the menu. TODO!" ]
+
 -- Render a background image and character
 -- Optionally render some debug geometry...
 -- For now the view is fixed in scale... Someday, scale it along with click events to accomodate
 -- the poor, miserable wretches who don't have my specific laptop
-view : State -> Html Msg
-view model =
+viewWorld : World -> Html Msg
+viewWorld model =
   let s = get model.currentScene model.scenes in
   case s of
       Nothing -> text "No scene, very bad error."
@@ -301,6 +321,9 @@ view model =
               , viewInventory model.character.inventory
               ]
 
+-- Draw a bunch of things. Stacking order is important.
+-- SVG might be better. TODO.
+-- I'm not even worrying about how images are scaled or match object bounds yet.
 renderScene : Scene -> Character -> Bool -> Html Msg                    
 renderScene scene char debug =
     div [ style [ ("background-image", "url(img/" ++ scene.image ++ ".png)")

@@ -9,7 +9,11 @@ type alias Pos = { x: Float, y: Float }
 -- A bunch of dictionaries/lists are expected to remain the same (or only grow) at least during action sequences.
 -- Will mark those items with a "**" I guess
 
-type alias State = { character : Character
+type GameState = Menu
+               | Interact World -- We're playing
+               | Animate CutScene World
+
+type alias World = { character : Character
                    , currentScene : String 
                    , scenes : Dict String Scene -- **
                    , debug : Bool
@@ -93,3 +97,6 @@ type alias Exit = { field : Playfield
                   , destinationSpawn : Int
                   , cursor : String -- hack hack hack
                   }
+
+type CutScene =
+    TrappedForever -- oh noez
