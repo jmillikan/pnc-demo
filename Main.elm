@@ -90,7 +90,12 @@ updateWorld msg modelIn =
         _ -> expectIn model.scenes model.currentScene
                 |> andThen (\scene -> updateWithScene msg model.character scene) 
                 |> Result.map (\(newChar, act) -> ({ model | character = newChar }, act))
-                |> andThen (\(newModel, act) -> maybe (Ok <| Interact newModel) (doAction newModel) act)
+                |> Result.map (\(newModel, act) -> maybe
+                                (Interact newModel)
+                                -- Absorb failures in doAction so they don't loop...
+                                (doAction newModel >>
+                                     Result.mapError (Debug.log "Error in doAction") >> 
+                                     Result.withDefault (Interact newModel) ) act)
     in case res of
            Err err -> Debug.log ("Error updating: " ++ err) (Interact model)
            Ok m -> m
@@ -159,6 +164,20 @@ doAction model action =
             getWorldUsableImage model key
                 |> Result.map (\oldImage ->
                                    Animate (AnimationUsable key time (InAnimation anim anim) oldImage) model)
+        SpecialPuzzleCheck ->
+            -- Hardcoded check against the "puzzle"
+            expectIn model.scenes "west"
+                |> andThen (\west -> Result.map3 (,,)
+                                (expectIn west.itemLocations "panel-1")
+                                (expectIn west.itemLocations "panel-2")
+                                (expectIn west.itemLocations "panel-3"))
+                |> andThen (\(panel1, panel2, panel3) ->
+                                case (panel1.contents, panel2.contents, panel3.contents) of
+                                    (Just item1, Just item2, Just item3) ->
+                                        if item1.name == "tile-2" && item2.name == "tile-1" && item3.name == "tile-3"
+                                        then Err "Unimplemented success" -- Sucess
+                                        else Err "Unimplemented failure"
+                                    _ -> Err "Unimplemented failure")
         LeaveUsable dest spawnIndex ->
             expectIn model.scenes dest
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict

@@ -19,7 +19,8 @@ demoScene = Scene
             (fromList [])
             (fromList [ ("demo-lever", Usable
                             (Playfield 170 170 300 300)
-                            (AnimateUsable "demo-lever" (4000 * millisecond) [("lever-left1", 500 * millisecond), ("lever-left2", 500 * millisecond)])
+                            -- (AnimateUsable "demo-lever" (4000 * millisecond) [("lever-left1", 500 * millisecond), ("lever-left2", 500 * millisecond)])
+                            SpecialPuzzleCheck
                             (Pos 250 350)
                             (Just "lever-left")
                             "pointer")
@@ -54,14 +55,14 @@ scene3 = Scene
          , { width = 100, height = 140, x = 873, y = 150 }
          ]
          [ Pos 1150 450 ]
-         (fromList [ ("panel1", ItemLocation { width = 100, height = 140, x = 294, y = 150 }
-                          (Just (Item 100 140 "tile-1" "This tile says one."))
+         (fromList [ ("panel-1", ItemLocation { width = 100, height = 140, x = 294, y = 150 }
+                          (Just (Item 100 140 "tile-1" "tile-1"))
                           (Pos 350 380))
-                   , ("panel2", ItemLocation { width = 100, height = 140, x = 590, y = 150 }
-                          (Just (Item 100 140 "tile-2" "This tile says two."))
+                   , ("panel-2", ItemLocation { width = 100, height = 140, x = 590, y = 150 }
+                          (Just (Item 100 140 "tile-2" "tile-2"))
                           (Pos 640 380))
-                   , ("panel3", ItemLocation { width = 100, height = 140, x = 873, y = 150 }
-                          (Just (Item 100 140 "tile-3" "This tile says three."))
+                   , ("panel-3", ItemLocation { width = 100, height = 140, x = 873, y = 150 }
+                          (Just (Item 100 140 "tile-3" "tile-3"))
                           (Pos 900 380))
          ])
          (fromList [ ("east-exit", Usable (Playfield 100 250 1200 200) (LeaveUsable "middle" 1) (Pos 1150 450) Nothing "e-resize")

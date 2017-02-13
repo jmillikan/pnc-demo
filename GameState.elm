@@ -46,6 +46,7 @@ type CharState = Still
 type Action = None
             | UseItemLocation String
             | LeaveUsable String Int
+            | SpecialPuzzleCheck
             | AnimateUsable String Float AnimCycle
 
 type alias AnimCycle = List (String, Time)
@@ -80,8 +81,6 @@ type alias Usable = { field : Playfield
                     , img : Maybe String -- Probably changeable...
                     , cursor : Cursor
                     }
-
-type alias Pointer = String    
 
 type GameAnimation =
     AnimationUsable String Float InAnimation (Maybe String)
