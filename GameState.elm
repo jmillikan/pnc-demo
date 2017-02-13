@@ -46,7 +46,7 @@ type CharState = Still
 type Action = None
             | Leave Exit
             | UseItemLocation String
-            | UseUsable String
+            | AnimateUsable String Float AnimCycle
 
 type alias AnimCycle = List (String, Time)
 
@@ -76,16 +76,10 @@ type alias ItemLocation = { field : Playfield
                           }
 
 type alias Usable = { field : Playfield
-                    , event : GameEvent
+                    , event : Action
                     , usePoint : Pos
                     , img : String -- Probably changeable...
                     }
-
--- A single demonstratory animation from an action
--- This is not *remotely* a good way to do this
-
-type GameEvent = NoEvent
-               | AnimateUsable String Float AnimCycle
 
 type GameAnimation =
     AnimationUsable String Float InAnimation String

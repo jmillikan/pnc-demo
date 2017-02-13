@@ -116,7 +116,7 @@ updateWithScene msg char scene =
             expectIn scene.itemLocations k
                 |> andThen (planWalk char scene (UseItemLocation k) << .collectPoint)
         UsableClick k _ -> expectIn scene.usables k
-                        |> andThen (planWalk char scene (UseUsable k) << .usePoint)
+                        |> andThen (\usable -> planWalk char scene usable.event usable.usePoint)
         StrayClick _ -> Err "Can't do anything with a stray click. (This is okay.)"
 
 planWalk : Character -> Scene -> Action -> Pos -> Result String (Character, Maybe a)
@@ -160,10 +160,10 @@ doAction model action =
                                    (putItemIn itemKey model) -- These two should be Result but I haven't gotten to it
                                    (\i -> grabItemFrom i itemKey itemLoc model))
                 |> Result.map Interact
-        UseUsable useKey ->
-            expectIn model.scenes model.currentScene
-                |> andThen (\scene -> expectIn scene.usables useKey)
-                |> andThen (\usable -> Debug.log "Do event" <| doEvent model usable.event)
+        AnimateUsable key time anim ->
+            getWorldUsableImage model key
+                |> Result.map (\oldImage ->
+                                   Animate (AnimationUsable key time (InAnimation anim anim) oldImage) model)
         Leave exit ->
             expectIn model.scenes exit.destination
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
@@ -171,18 +171,6 @@ doAction model action =
                 |> Result.map (\spawn -> let char = model.character
                                          in Interact { model | currentScene = exit.destination
                                                      , character = { char | pos = spawn } })
-
--- Action is something that happens at the end of a walk as a result of a click...
--- The distinction from Event may prove non-meaningful.
--- Events should be able to "stop the world" for animations.
-doEvent : World -> GameEvent -> Result String GameState
-doEvent s ev =
-    case ev of
-        NoEvent -> Ok <| Interact s
-        AnimateUsable key time anim ->
-            getWorldUsableImage s key
-                |> Result.map (\oldImage ->
-                                   Animate (AnimationUsable key time (InAnimation anim anim) oldImage) s)
 
 getWorldUsableImage : World -> String -> Result String String 
 getWorldUsableImage world key =
