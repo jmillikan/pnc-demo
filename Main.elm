@@ -61,12 +61,6 @@ debugField model =
                          toString (Playfield (p2.x - p1.x) (p2.y - p1.y) p1.x p1.y)
         _ -> "No dice"
 
--- Start clearing out the Maybe thicket...             
-expectIn : Dict comparable v -> comparable -> Result String v
-expectIn dict k = Result.fromMaybe ("Missing expected value for key " ++ toString k)
-                  <| get k dict
-
-
 update : Msg -> GameState -> ( GameState, Cmd Msg )
 update msg state =
     case state of
@@ -132,8 +126,28 @@ planWalk char scene action pos =
                            let newState = MovingTo ps (InAnimation char.walkCycle char.walkCycle) action
                            in ({ char | state = newState }, Nothing))
 
+
+-- MAYBE AND RESULT UTILS           
 maybe : b -> (a -> b) -> Maybe a -> b
-maybe def f m = withDefault def (Maybe.map f m)        
+maybe def f m = withDefault def (Maybe.map f m)
+
+                -- expectAt and expectIn are different ways round. It's bad.
+-- Should just toss the lists and use Dict, but I have too much brain load right now                           
+expectAt : (a -> Bool) -> List a -> Result String a
+expectAt f l = Result.fromMaybe ("Expected to find item in " ++ toString l)
+                <| List.head <| List.filter f l
+
+-- Start clearing out the Maybe thicket...             
+expectIn : Dict comparable v -> comparable -> Result String v
+expectIn dict k = Result.fromMaybe ("Missing expected value for key " ++ toString k)
+                  <| get k dict
+
+                      -- Update by explicitly failing instead of silently failing
+expectUpdate : comparable -> Dict comparable a -> (a -> Result String a) -> Result String (Dict comparable a)
+expectUpdate key dict f =
+    expectIn dict key
+        |> andThen f
+        |> Result.map (\v -> Dict.insert key v dict)
 
 doAction : World -> Action -> Result String GameState
 doAction model action =
@@ -274,12 +288,6 @@ findPlayfield : List Playfield -> Pos -> Result String Playfield
 findPlayfield fields pos = Result.fromMaybe "Can't find pos in playfield"
                            <| List.head <| List.filter (pointInPlayfield pos) fields
 
--- expectAt and expectIn are different ways round. It's bad.
--- Should just toss the lists and use Dict, but I have too much brain load right now                           
-expectAt : (a -> Bool) -> List a -> Result String a
-expectAt f l = Result.fromMaybe ("Expected to find item in " ++ toString l)
-                <| List.head <| List.filter f l
-
 findExit : List Exit -> Pos -> Result String Exit
 findExit exits pos = expectAt (pointInPlayfield pos << .field) exits
 
@@ -318,7 +326,7 @@ runCutScene delta ev world =
                 in getAnimImage newAnim
                     |> andThen (\img -> setWorldUsableImage world key img)
                     |> Result.map (\newWorld -> Animate (AnimationUsable key (timeLeft - delta) newAnim doneImage) newWorld)
-                       
+
 getAnimImage : InAnimation -> Result String String
 getAnimImage anim =
     Result.fromMaybe "Animation is empty or something"
@@ -326,13 +334,13 @@ getAnimImage anim =
 
 setWorldUsableImage : World -> String -> String -> Result String World
 setWorldUsableImage world key img =
-    Ok <| let newScenes = Dict.update world.currentScene (Maybe.map <| setSceneUsableImage key img) world.scenes
-          in { world | scenes = newScenes }
+    expectUpdate world.currentScene world.scenes (setSceneUsableImage key img)
+        |> Result.map (\newScenes -> { world | scenes = newScenes })
 
-setSceneUsableImage : String -> String -> Scene -> Scene
+setSceneUsableImage : String -> String -> Scene -> Result String Scene
 setSceneUsableImage key img scene =
-    let newUsables = Dict.update key (Maybe.map (\usable -> { usable | img = img } )) scene.usables
-    in { scene | usables = newUsables }
+    expectUpdate key scene.usables (\usable -> Ok <| { usable | img = img })
+        |> Result.map (\newUsables -> { scene | usables = newUsables })
 
 view : GameState -> Html Msg
 view state =
