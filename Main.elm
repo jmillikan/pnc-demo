@@ -32,7 +32,6 @@ subscriptions model = Sub.batch [ presses Key
 type Msg = Tick Time
     -- The *Click stuff will get compacted when objects are generalized
          | FloorClick Pos
-         | ExitClick Pos
          | StrayClick Pos -- Debugging...
          | ItemLocationClick String Pos
          | UsableClick String Pos
@@ -48,7 +47,6 @@ clickPos x y = Pos (toFloat x) (toFloat y)
 collectClicks : Msg -> World -> World               
 collectClicks msg modelIn =
     case msg of
-        ExitClick pos -> addClick pos modelIn
         FloorClick pos -> addClick pos modelIn
         StrayClick pos -> addClick pos modelIn
         UsableClick _ pos -> addClick pos modelIn
@@ -108,9 +106,6 @@ updateWithScene msg char scene =
     case msg of
         Key _ -> Err "Key shoudldn't be here (TODO)"
         Tick delta -> Ok <| walk char delta
-        ExitClick pos -> -- In theory this is a bit easier than the alternatives
-            findExit scene.exits pos
-                |> andThen (\exit -> planWalk char scene (Leave exit) exit.position)
         FloorClick pos -> planWalk char scene None pos
         ItemLocationClick k _ ->
             expectIn scene.itemLocations k
@@ -164,15 +159,15 @@ doAction model action =
             getWorldUsableImage model key
                 |> Result.map (\oldImage ->
                                    Animate (AnimationUsable key time (InAnimation anim anim) oldImage) model)
-        Leave exit ->
-            expectIn model.scenes exit.destination
+        LeaveUsable dest spawnIndex ->
+            expectIn model.scenes dest
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
-                                      <| List.head <| List.drop exit.destinationSpawn scene.entrance)
+                                      <| List.head <| List.drop spawnIndex scene.entrance)
                 |> Result.map (\spawn -> let char = model.character
-                                         in Interact { model | currentScene = exit.destination
+                                         in Interact { model | currentScene = dest
                                                      , character = { char | pos = spawn } })
 
-getWorldUsableImage : World -> String -> Result String String 
+getWorldUsableImage : World -> String -> Result String (Maybe String)
 getWorldUsableImage world key =
     expectIn world.scenes world.currentScene
         |> andThen (\scene -> expectIn scene.usables key)
@@ -276,9 +271,6 @@ findPlayfield : List Playfield -> Pos -> Result String Playfield
 findPlayfield fields pos = Result.fromMaybe "Can't find pos in playfield"
                            <| List.head <| List.filter (pointInPlayfield pos) fields
 
-findExit : List Exit -> Pos -> Result String Exit
-findExit exits pos = expectAt (pointInPlayfield pos << .field) exits
-
 pointInPlayfield : Pos -> Playfield -> Bool
 pointInPlayfield p field =
     p.x >= field.x
@@ -312,7 +304,7 @@ runCutScene delta ev world =
             else -- Ignore animation for now
                 let newAnim = advanceAnim animation delta 
                 in getAnimImage newAnim
-                    |> andThen (\img -> setWorldUsableImage world key img)
+                    |> andThen (\img -> setWorldUsableImage world key (Just img))
                     |> Result.map (\newWorld -> Animate (AnimationUsable key (timeLeft - delta) newAnim doneImage) newWorld)
 
 getAnimImage : InAnimation -> Result String String
@@ -320,12 +312,12 @@ getAnimImage anim =
     Result.fromMaybe "Animation is empty or something"
         <| Maybe.map first <| List.head anim.current
 
-setWorldUsableImage : World -> String -> String -> Result String World
+setWorldUsableImage : World -> String -> Maybe String -> Result String World
 setWorldUsableImage world key img =
     expectUpdate world.currentScene world.scenes (setSceneUsableImage key img)
         |> Result.map (\newScenes -> { world | scenes = newScenes })
 
-setSceneUsableImage : String -> String -> Scene -> Result String Scene
+setSceneUsableImage : String -> Maybe String -> Scene -> Result String Scene
 setSceneUsableImage key img scene =
     expectUpdate key scene.usables (\usable -> Ok <| { usable | img = img })
         |> Result.map (\newUsables -> { scene | usables = newUsables })
@@ -376,8 +368,6 @@ renderScene scene char debug =
         ]
       [ div [] (if debug then
                     (List.map (viewDebugField "blue") scene.playfields)
-                    ++ (List.map (viewDebugField "green" << .field) scene.exits)
-                    ++ (List.map (viewDebugPos "e" << .position) scene.exits)
                     ++ (List.map (viewDebugPos "i" << .collectPoint) (values scene.itemLocations))
                     ++ (List.map (viewDebugPos "u" << .usePoint) (values scene.usables))
                     ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations))
@@ -388,9 +378,8 @@ renderScene scene char debug =
       , div [] (if debug then [viewDebugPos "C" char.pos] else [])
       -- These need to be "on top". This is not really a good solution.
       , div [] (List.map (clickField identity (always FloorClick) (always "crosshair")) scene.playfields)
-      , div [] (List.map (clickField (.field) (always ExitClick) (.cursor)) scene.exits)
       , div [] (List.map (clickField (.field << second) (ItemLocationClick << first) (always "move")) (toList scene.itemLocations))
-      , div [] (List.map (clickField (.field << second) (UsableClick << first) (always "move")) (toList scene.usables))
+      , div [] (List.map (clickField (.field << second) (UsableClick << first) (.cursor << second)) (toList scene.usables))
       ]
 
 viewInventory : List Item -> Html Msg
@@ -418,12 +407,15 @@ viewItemLocation itemLoc =
                          ] ] [ img [src ("img/" ++ item.img ++ ".png"), style [ ("width", toString item.width ++ "px" ) ] ] [] ]
 
 viewUsable : Usable -> Html Msg
-viewUsable u = div [ style [ ("height", toString u.field.height ++ "px")
-                           , ("width", toString u.field.width ++ "px")
-                           , ("position", "absolute")
-                           , ("top", toString u.field.y ++ "px") -- fudge fudge
-                           , ("left", toString u.field.x ++ "px")
-                           ] ] [ img [src ("img/" ++ u.img ++ ".png"), style [ ("width", toString u.field.width ++ "px" ) ] ] [] ]
+viewUsable u =
+    case u.img of
+        Nothing -> div [ ] [ ]
+        Just tag -> div [ style [ ("height", toString u.field.height ++ "px")
+                                , ("width", toString u.field.width ++ "px")
+                                , ("position", "absolute")
+                                , ("top", toString u.field.y ++ "px") -- fudge fudge
+                                , ("left", toString u.field.x ++ "px")
+                                ] ] [ img [src ("img/" ++ tag ++ ".png"), style [ ("width", toString u.field.width ++ "px" ) ] ] [] ]
             
 selfish : Options
 selfish = Options True True

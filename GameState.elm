@@ -44,8 +44,8 @@ type CharState = Still
                | MovingTo (List Pos) InAnimation Action
 
 type Action = None
-            | Leave Exit
             | UseItemLocation String
+            | LeaveUsable String Int
             | AnimateUsable String Float AnimCycle
 
 type alias AnimCycle = List (String, Time)
@@ -61,7 +61,6 @@ type alias Cursor = String
 type alias Scene = { image : String
                    , playfields : List Playfield -- **
                    , entrance : List Pos -- **
-                   , exits : List Exit -- **
                    , itemLocations : Dict String ItemLocation -- **
                    , usables : Dict String Usable -- ** Someday this and itemLocations (and maybe exits and walkables) will move together...
                    }
@@ -78,11 +77,14 @@ type alias ItemLocation = { field : Playfield
 type alias Usable = { field : Playfield
                     , event : Action
                     , usePoint : Pos
-                    , img : String -- Probably changeable...
+                    , img : Maybe String -- Probably changeable...
+                    , cursor : Cursor
                     }
 
+type alias Pointer = String    
+
 type GameAnimation =
-    AnimationUsable String Float InAnimation String
+    AnimationUsable String Float InAnimation (Maybe String)
 
 -- Playfield segment rectangle
 -- Needs to be called something else...
@@ -91,10 +93,3 @@ type alias Playfield = { width : Float
                        , x : Float
                        , y : Float
                        }
-
-type alias Exit = { field : Playfield
-                  , position : Pos
-                  , destination : String
-                  , destinationSpawn : Int
-                  , cursor : String -- hack hack hack
-                  }
