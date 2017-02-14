@@ -169,7 +169,7 @@ doAction model action =
             getWorldUsableImage model key
                 |> Result.map (\oldImage ->
                                    Animate (AnimationUsable key time (InAnimation anim anim) oldImage None) model)
-        SpecialPuzzleCheck ->
+        SpecialPuzzleCheck successAction failAction ->
             -- Hardcoded check against the "puzzle"
             expectIn model.scenes "west"
                 |> andThen (\west -> Result.map3 (,,)
@@ -180,11 +180,18 @@ doAction model action =
                                 case (panel1.contents, panel2.contents, panel3.contents) of
                                     (Just item1, Just item2, Just item3) ->
                                         if item1.name == "tile-2" && item2.name == "tile-1" && item3.name == "tile-3"
-                                        then addUsable "east" DemoLevel.rocket model
-                                            -- "bug" - will add more rockets forever.
-                                                 |> Result.map (Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState))
-                                        else Ok <| Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState) model
-                                    _ -> Ok <| Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState) model)
+                                        then doAction model successAction
+                                        --activate "east" "escape-rocket" model
+                                             --    |> Result.map (Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState))
+                                        else doAction model failAction
+                                    _ -> doAction model failAction)
+        Sequence action1 action2 -> -- hack hack hack
+            doAction model action1
+                |> andThen (\res -> case res of
+                                        Interact world1 -> doAction world1 action2
+                                        _ -> Err "Action 1 tried to leave interact. Halting action 2.")
+        ActivateUsable sceneKey usableKey ->
+            Result.map Interact <| activate sceneKey usableKey model
         LeaveUsable dest spawnIndex ->
             expectIn model.scenes dest
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
@@ -193,12 +200,13 @@ doAction model action =
                                          in Interact { model | currentScene = dest
                                                      , character = { char | pos = spawn } })
 
--- Not sure how I feel about adding/removing clickable areas. Probably necessary.
-addUsable : String -> (String, Usable) -> World -> Result String World
-addUsable sceneKey (k, u) world =
-     expectUpdate sceneKey world.scenes
-        (\scene -> Ok <| { scene | usables = Dict.insert k u scene.usables })
-            |> Result.map (\scenes ->    { world | scenes = scenes })
+activate : String -> String -> World -> Result String World
+activate sceneKey usableKey world =
+    expectUpdate sceneKey world.scenes
+        (\scene -> expectUpdate usableKey scene.usables
+             (\usable -> Ok <| { usable | active = True })
+             |> Result.map (\usables -> { scene | usables = usables }))
+        |> Result.map (\scenes -> { world | scenes = scenes })
 
 getWorldUsableImage : World -> String -> Result String (Maybe String)
 getWorldUsableImage world key =
@@ -393,6 +401,8 @@ viewWorld model =
 -- I'm not even worrying about how images are scaled or match object bounds yet
 renderScene : Scene -> Character -> Bool -> Html Msg                    
 renderScene scene char debug =
+    let usables = Dict.filter (always .active) scene.usables
+    in
     div [ style [ ("background-image", "url(img/" ++ scene.image ++ ".png)")
                 , ("width", "1400px")
                 , ("height", "700px")
@@ -402,17 +412,18 @@ renderScene scene char debug =
       [ div [] (if debug then
                     (List.map (viewDebugField "blue") scene.playfields)
                     ++ (List.map (viewDebugPos "i" << .collectPoint) (values scene.itemLocations))
-                    ++ (List.map (viewDebugPos "u") (List.filterMap .usePoint <| values scene.usables))
+                    ++ (List.map (viewDebugPos "u") (List.filterMap .usePoint <| values usables))
                     ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations))
-                    ++ (List.map (viewDebugField "orange" << .field) (values scene.usables)) else [])
+                    ++ (List.map (viewDebugField "orange" << .field) (values usables)) else [])
       , div [] (List.map viewItemLocation (values scene.itemLocations))
-      , div [] (List.map viewUsable (values scene.usables))
+      , div [] (List.map viewUsable (values usables))
       , viewChar char
       , div [] (if debug then [viewDebugPos "C" char.pos] else [])
       -- These need to be "on top". This is not really a good solution.
       , div [] (List.map (clickField identity (always FloorClick) (always "crosshair")) scene.playfields)
       , div [] (List.map (clickField (.field << second) (ItemLocationClick << first) (always "move")) (toList scene.itemLocations))
-      , div [] (List.map (clickField (.field << second) (UsableClick << first) (.cursor << second)) (toList scene.usables))
+      , div [] (List.map (clickField (.field << second) (UsableClick << first) (.cursor << second))
+                    (toList usables))
       ]
 
 viewInventory : List Item -> Html Msg

@@ -47,8 +47,11 @@ type Action = None
             | UseItemLocation String
             | LeaveUsable String Int
             | AnimateUsable String Float AnimCycle
+            -- Stopgap - since action 1 might need to Animate or whatever, this is wrong
+            | Sequence Action Action 
             -- Fudged to finish demo...
-            | SpecialPuzzleCheck
+            | SpecialPuzzleCheck Action Action
+            | ActivateUsable String String
             | GoScene String
             | ReturnToMenu
 
@@ -83,6 +86,7 @@ type alias Usable = { field : Playfield
                     , usePoint : Maybe Pos
                     , img : Maybe String -- Probably changeable...
                     , cursor : Cursor
+                    , active : Bool
                     }
 
 type GameAnimation = AnimationUsable String Float InAnimation (Maybe String) Action
