@@ -115,8 +115,11 @@ updateWithScene msg char scene =
         ItemLocationClick k _ ->
             expectIn scene.itemLocations k
                 |> andThen (planWalk char scene (UseItemLocation k) << .collectPoint)
-        UsableClick k _ -> expectIn scene.usables k
-                        |> andThen (\usable -> planWalk char scene usable.event usable.usePoint)
+        UsableClick k _ -> expectIn scene.usables k                           
+                        |> andThen (\usable ->
+                                        case usable.usePoint of
+                                            Just p -> planWalk char scene usable.event p
+                                            Nothing -> Ok <| (char, Just usable.event))
         StrayClick _ -> Err "Can't do anything with a stray click. (This is okay.)"
 
 planWalk : Character -> Scene -> Action -> Pos -> Result String (Character, Maybe a)
@@ -153,6 +156,8 @@ doAction : World -> Action -> Result String GameState
 doAction model action =
     case action of
         None -> Ok <| Interact model
+        ReturnToMenu -> Ok <| Menu
+        GoScene s -> Ok <| Interact { model | currentScene = s } -- Overlaps LeaveUsable
         UseItemLocation itemKey ->
             expectIn model.scenes model.currentScene
                 |> andThen (\scene -> expectIn scene.itemLocations itemKey)
@@ -163,7 +168,7 @@ doAction model action =
         AnimateUsable key time anim ->
             getWorldUsableImage model key
                 |> Result.map (\oldImage ->
-                                   Animate (AnimationUsable key time (InAnimation anim anim) oldImage) model)
+                                   Animate (AnimationUsable key time (InAnimation anim anim) oldImage None) model)
         SpecialPuzzleCheck ->
             -- Hardcoded check against the "puzzle"
             expectIn model.scenes "west"
@@ -175,9 +180,11 @@ doAction model action =
                                 case (panel1.contents, panel2.contents, panel3.contents) of
                                     (Just item1, Just item2, Just item3) ->
                                         if item1.name == "tile-2" && item2.name == "tile-1" && item3.name == "tile-3"
-                                        then Err "Unimplemented success" -- Sucess
-                                        else Err "Unimplemented failure"
-                                    _ -> Err "Unimplemented failure")
+                                        then addUsable "east" DemoLevel.rocket model
+                                            -- "bug" - will add more rockets forever.
+                                                 |> Result.map (Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState))
+                                        else Ok <| Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState) model
+                                    _ -> Ok <| Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState) model)
         LeaveUsable dest spawnIndex ->
             expectIn model.scenes dest
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
@@ -185,6 +192,13 @@ doAction model action =
                 |> Result.map (\spawn -> let char = model.character
                                          in Interact { model | currentScene = dest
                                                      , character = { char | pos = spawn } })
+
+-- Not sure how I feel about adding/removing clickable areas. Probably necessary.
+addUsable : String -> (String, Usable) -> World -> Result String World
+addUsable sceneKey (k, u) world =
+     expectUpdate sceneKey world.scenes
+        (\scene -> Ok <| { scene | usables = Dict.insert k u scene.usables })
+            |> Result.map (\scenes ->    { world | scenes = scenes })
 
 getWorldUsableImage : World -> String -> Result String (Maybe String)
 getWorldUsableImage world key =
@@ -316,15 +330,15 @@ middleOfX f1 f2 =
 runCutScene : Time -> GameAnimation -> World -> Result String GameState
 runCutScene delta ev world =
     case ev of
-        AnimationUsable key timeLeft animation doneImage ->
+        AnimationUsable key timeLeft animation doneImage nextEvent ->
             if timeLeft <= delta
             then setWorldUsableImage world key doneImage
-                           |> Result.map Interact
+                           |> andThen (\world -> doAction world nextEvent) 
             else -- Ignore animation for now
                 let newAnim = advanceAnim animation delta 
                 in getAnimImage newAnim
                     |> andThen (\img -> setWorldUsableImage world key (Just img))
-                    |> Result.map (\newWorld -> Animate (AnimationUsable key (timeLeft - delta) newAnim doneImage) newWorld)
+                    |> Result.map (\newWorld -> Animate (AnimationUsable key (timeLeft - delta) newAnim doneImage nextEvent) newWorld)
 
 getAnimImage : InAnimation -> Result String String
 getAnimImage anim =
@@ -388,7 +402,7 @@ renderScene scene char debug =
       [ div [] (if debug then
                     (List.map (viewDebugField "blue") scene.playfields)
                     ++ (List.map (viewDebugPos "i" << .collectPoint) (values scene.itemLocations))
-                    ++ (List.map (viewDebugPos "u" << .usePoint) (values scene.usables))
+                    ++ (List.map (viewDebugPos "u") (List.filterMap .usePoint <| values scene.usables))
                     ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations))
                     ++ (List.map (viewDebugField "orange" << .field) (values scene.usables)) else [])
       , div [] (List.map viewItemLocation (values scene.itemLocations))

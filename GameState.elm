@@ -46,8 +46,11 @@ type CharState = Still
 type Action = None
             | UseItemLocation String
             | LeaveUsable String Int
-            | SpecialPuzzleCheck
             | AnimateUsable String Float AnimCycle
+            -- Fudged to finish demo...
+            | SpecialPuzzleCheck
+            | GoScene String
+            | ReturnToMenu
 
 type alias AnimCycle = List (String, Time)
 
@@ -77,13 +80,12 @@ type alias ItemLocation = { field : Playfield
 
 type alias Usable = { field : Playfield
                     , event : Action
-                    , usePoint : Pos
+                    , usePoint : Maybe Pos
                     , img : Maybe String -- Probably changeable...
                     , cursor : Cursor
                     }
 
-type GameAnimation =
-    AnimationUsable String Float InAnimation (Maybe String)
+type GameAnimation = AnimationUsable String Float InAnimation (Maybe String) Action
 
 -- Playfield segment rectangle
 -- Needs to be called something else...
