@@ -3,15 +3,16 @@ module GameState exposing(..)
 import Dict exposing (Dict)
 import Time exposing (Time)
 
--- Positions and units are screen pixels
-type alias Pos = { x: Float, y: Float }
-
 -- A bunch of dictionaries/lists are expected to remain the same (or only grow) at least during action sequences.
 -- Will mark those items with a "**" I guess
 
-type GameState = Menu
-               | Interact World -- We're playing
-               | Animate GameAnimation World
+--
+-- World state
+-- Doubles as level description
+-- 
+
+-- Positions and units are screen pixels
+type alias Pos = { x: Float, y: Float }
 
 type alias World = { character : Character
                    , currentScene : String 
@@ -37,11 +38,12 @@ type alias Item = { width : Float
                   , name : String -- Possibly debug-only...
                   }
 
-type Facing = Left | Right    
+type Facing = Left | Right
 
 -- MovingTo - multi-segment movement plan
 type CharState = Still
-               | MovingTo (List Pos) InAnimation Action
+               -- Skip out of encoding MovingTo and InAnimation for now.
+               | MovingTo (List Pos) InAnimation Action 
 
 type Action = None
             -- Item locations are the one basically hardcoded game element left
@@ -60,12 +62,6 @@ type Action = None
             | ReturnToMenu
 
 type alias AnimCycle = List (String, Time)
-
--- Very simple animation system
--- Or it was supposed to be...
-type alias InAnimation = { segments : AnimCycle
-                         , current : AnimCycle
-                         }
 
 type alias Cursor = String    
 
@@ -93,8 +89,6 @@ type alias Usable = { field : Playfield
                     , active : Bool
                     }
 
-type GameAnimation = AnimationUsable String Float InAnimation (Maybe String) Action
-
 -- Playfield segment rectangle
 -- Needs to be called something else...
 type alias Playfield = { width : Float
@@ -102,3 +96,20 @@ type alias Playfield = { width : Float
                        , x : Float
                        , y : Float
                        }
+
+--
+-- "Runtime" types
+--
+
+type GameState = Menu
+               | Interact World -- We're playing
+               | Animate GameAnimation World
+
+-- Very simple animation system
+-- Or it was supposed to be...
+type alias InAnimation = { segments : AnimCycle
+                         , current : AnimCycle
+                         }
+
+type GameAnimation = AnimationUsable String Float InAnimation (Maybe String) Action
+
