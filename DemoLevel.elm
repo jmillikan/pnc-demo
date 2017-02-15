@@ -19,8 +19,8 @@ demoScene = Scene
             (fromList [])
             (fromList [ ("demo-lever", Usable
                             (Playfield 170 170 300 300)
-                            --(AnimateUsable "demo-lever" (4000 * millisecond) [("lever-left1", 500 * millisecond), ("lever-left2", 500 * millisecond)])
-                            (SpecialPuzzleCheck
+                            (ContentsCheck
+                                 [("west", "panel-1", Just "tile-2"), ("west", "panel-2", Just "tile-1"), ("west", "panel-3", Just "tile-3")]
                                  (Sequence
                                       (ActivateUsable "east" "escape-rocket")
                                       (AnimateUsable "demo-lever" (1000 * millisecond) [("lever-left1", 100 * millisecond), ("lever-left2", 100 * millisecond)]))
@@ -30,13 +30,13 @@ demoScene = Scene
                             "pointer" True)
                       , ("east-exit", Usable
                              (Playfield 100 300 1250 150)
-                             (LeaveUsable "east" 0)
+                             (Leave "east" 0)
                              (Just <| Pos 1275 400)
                              Nothing
                              "e-resize" True)
                       , ("west-exit", Usable
                              (Playfield 100 300 0 80)
-                             (LeaveUsable "west" 0)
+                             (Leave "west" 0)
                              (Just <| Pos 50 330)
                              Nothing
                              "w-resize" True)
@@ -48,7 +48,7 @@ scene2 = Scene
          [Playfield 200 100 0 150, Playfield 800 500 130 100]
          [Pos 50 200]
          (fromList [])
-         (fromList [ ("west-exit", Usable (Playfield 70 200 0 50) (LeaveUsable "middle" 0) (Just <| Pos 50 200) Nothing "w-resize" True)
+         (fromList [ ("west-exit", Usable (Playfield 70 200 0 50) (Leave "middle" 0) (Just <| Pos 50 200) Nothing "w-resize" True)
                    , ("escape-rocket", Usable (Playfield 214 277 400 200) (GoScene "victory") (Just <| Pos 300 400) (Just "escape-rocket") "n-resize" False)
                    ])
 
@@ -80,7 +80,7 @@ scene3 = Scene
                           (Just (Item 100 140 "tile-3" "tile-3"))
                           (Pos 900 380))
          ])
-         (fromList [ ("east-exit", Usable (Playfield 100 250 1200 200) (LeaveUsable "middle" 1) (Just <| Pos 1150 450) Nothing "e-resize" True)
+         (fromList [ ("east-exit", Usable (Playfield 100 250 1200 200) (Leave "middle" 1) (Just <| Pos 1150 450) Nothing "e-resize" True)
                    ])
 
 sceneDict : Dict String Scene

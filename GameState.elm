@@ -44,14 +44,18 @@ type CharState = Still
                | MovingTo (List Pos) InAnimation Action
 
 type Action = None
+            -- Item locations are the one basically hardcoded game element left
+            -- Could expand them, could replace them
             | UseItemLocation String
-            | LeaveUsable String Int
-            | AnimateUsable String Float AnimCycle
-            -- Stopgap - since action 1 might need to Animate or whatever, this is wrong
-            | Sequence Action Action 
-            -- Fudged to finish demo...
-            | SpecialPuzzleCheck Action Action
+            -- Make a Usable active (visible and clickable)
             | ActivateUsable String String
+            | Leave String Int
+            -- A very limited, 1-object-at-a-time form of animation
+            | AnimateUsable String Float AnimCycle
+            -- Stopgap. If action1 tries to animate etc, this just blows up
+            | Sequence Action Action 
+            -- Could be chopped up to separate the query from the actions
+            | ContentsCheck (List (String, String, Maybe String)) Action Action
             | GoScene String
             | ReturnToMenu
 

@@ -157,7 +157,7 @@ doAction model action =
     case action of
         None -> Ok <| Interact model
         ReturnToMenu -> Ok <| Menu
-        GoScene s -> Ok <| Interact { model | currentScene = s } -- Overlaps LeaveUsable
+        GoScene s -> Ok <| Interact { model | currentScene = s } -- Overlaps Leave
         UseItemLocation itemKey ->
             expectIn model.scenes model.currentScene
                 |> andThen (\scene -> expectIn scene.itemLocations itemKey)
@@ -169,30 +169,20 @@ doAction model action =
             getWorldUsableImage model key
                 |> Result.map (\oldImage ->
                                    Animate (AnimationUsable key time (InAnimation anim anim) oldImage None) model)
-        SpecialPuzzleCheck successAction failAction ->
-            -- Hardcoded check against the "puzzle"
-            expectIn model.scenes "west"
-                |> andThen (\west -> Result.map3 (,,)
-                                (expectIn west.itemLocations "panel-1")
-                                (expectIn west.itemLocations "panel-2")
-                                (expectIn west.itemLocations "panel-3"))
-                |> andThen (\(panel1, panel2, panel3) ->
-                                case (panel1.contents, panel2.contents, panel3.contents) of
-                                    (Just item1, Just item2, Just item3) ->
-                                        if item1.name == "tile-2" && item2.name == "tile-1" && item3.name == "tile-3"
-                                        then doAction model successAction
-                                        --activate "east" "escape-rocket" model
-                                             --    |> Result.map (Animate (DemoLevel.plzAnimate DemoLevel.puzzleFailState))
-                                        else doAction model failAction
-                                    _ -> doAction model failAction)
-        Sequence action1 action2 -> -- hack hack hack
+        ContentsCheck itemChecks successAction failAction ->
+            checkContents itemChecks model
+                |> andThen (\itemsMatch ->
+                                if itemsMatch 
+                                then doAction model successAction
+                                else doAction model failAction)
+        Sequence action1 action2 ->
             doAction model action1
                 |> andThen (\res -> case res of
                                         Interact world1 -> doAction world1 action2
                                         _ -> Err "Action 1 tried to leave interact. Halting action 2.")
         ActivateUsable sceneKey usableKey ->
             Result.map Interact <| activate sceneKey usableKey model
-        LeaveUsable dest spawnIndex ->
+        Leave dest spawnIndex ->
             expectIn model.scenes dest
                 |> andThen (\scene -> Result.fromMaybe "No spawn found..." -- TODO: Helper, or change to dict
                                       <| List.head <| List.drop spawnIndex scene.entrance)
@@ -200,6 +190,21 @@ doAction model action =
                                          in Interact { model | currentScene = dest
                                                      , character = { char | pos = spawn } })
 
+checkContents : List (String, String, Maybe String) -> World -> Result String Bool
+checkContents itemChecks world =
+    case itemChecks of
+        [] -> Ok True
+        (sceneKey, locKey, checkFor) :: rest ->
+            expectIn world.scenes sceneKey
+                |> andThen (\scene -> expectIn scene.itemLocations locKey)
+                |> andThen (\loc -> case (loc.contents, checkFor)  of
+                                        (Just foundItem, Just checkItem) ->
+                                            if foundItem.name == checkItem
+                                            then checkContents rest world
+                                            else Ok False
+                                        (Nothing, Nothing) -> checkContents rest world
+                                        _ -> Ok False)
+                                        
 activate : String -> String -> World -> Result String World
 activate sceneKey usableKey world =
     expectUpdate sceneKey world.scenes
