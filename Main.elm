@@ -1,6 +1,5 @@
 import AnimationFrame exposing (diffs)
 import Char exposing (toCode)
---import DemoLevel exposing (demoState)
 import Dict exposing (Dict, fromList, toList, get, values)
 import GameState exposing (..)
 import Html exposing (Html, button, div, img, text)
@@ -16,14 +15,6 @@ import Http
 
 main : Program Never GameState Msg
 main = Html.program { init = (Menu, Cmd.none), view = view, update = update, subscriptions = subscriptions }
-
--- The bulk of the code divides up about five/six ways:
--- Types, mostly game/planning state
--- Demo data (three scenes and a bunch of objects)
--- update & debug (except updateWithScene)
--- updateWithScene & primitives (except walk)
--- walk & primitives
--- doAction/doEvent & primitives
 
 subscriptions : GameState -> Sub Msg
 subscriptions model = Sub.batch [ presses Key

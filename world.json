@@ -1,0 +1,434 @@
+{
+    "type": "world",
+    "character": {
+        "type": "character",
+        "w": 120,
+        "h": 180,
+        "pos": {
+            "type": "pos",
+            "x": 200,
+            "y": 300
+        },
+        "speed": 0.2,
+        "facing": {
+            "type": "right"
+        },
+        "walkCycle": [
+            {
+                "type": "animCycle",
+                "img": "1",
+                "duration": 500
+            },
+            {
+                "type": "animCycle",
+                "img": "2",
+                "duration": 500
+            }
+        ],
+        "inventory": []
+    },
+    "currentScene": "middle",
+    "scenes": {
+        "east": {
+            "type": "scene",
+            "img": "bg2",
+            "fields": [
+                {
+                    "type": "playfield",
+                    "w": 200,
+                    "h": 100,
+                    "x": 0,
+                    "y": 150
+                },
+                {
+                    "type": "playfield",
+                    "w": 800,
+                    "h": 500,
+                    "x": 130,
+                    "y": 100
+                }
+            ],
+            "entrances": [
+                {
+                    "type": "pos",
+                    "x": 50,
+                    "y": 200
+                }
+            ],
+            "itemLocs": {},
+            "usables": {
+                "escape-rocket": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 214,
+                        "h": 277,
+                        "x": 400,
+                        "y": 200
+                    },
+                    "event": {
+                        "type": "goScene",
+                        "scene": "victory"
+                    },
+                    "usePoint": {
+                        "type": "pos",
+                        "x": 300,
+                        "y": 400
+                    },
+                    "img": "escape-rocket",
+                    "cursor": "n-resize",
+                    "active": false
+                },
+                "west-exit": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 70,
+                        "h": 200,
+                        "x": 0,
+                        "y": 50
+                    },
+                    "event": {
+                        "type": "leave",
+                        "scene": "middle",
+                        "spawn": 0
+                    },
+                    "usePoint": {
+                        "type": "pos",
+                        "x": 50,
+                        "y": 200
+                    },
+                    "img": null,
+                    "cursor": "w-resize",
+                    "active": true
+                }
+            }
+        },
+        "middle": {
+            "type": "scene",
+            "img": "bg1",
+            "fields": [
+                {
+                    "type": "playfield",
+                    "w": 800,
+                    "h": 330,
+                    "x": 100,
+                    "y": 160
+                },
+                {
+                    "type": "playfield",
+                    "w": 510,
+                    "h": 100,
+                    "x": 890,
+                    "y": 350
+                },
+                {
+                    "type": "playfield",
+                    "w": 700,
+                    "h": 100,
+                    "x": -590,
+                    "y": 280
+                }
+            ],
+            "entrances": [
+                {
+                    "type": "pos",
+                    "x": 1100,
+                    "y": 400
+                },
+                {
+                    "type": "pos",
+                    "x": 50,
+                    "y": 350
+                }
+            ],
+            "itemLocs": {},
+            "usables": {
+                "demo-lever": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 170,
+                        "h": 170,
+                        "x": 300,
+                        "y": 300
+                    },
+                    "event": {
+                        "type": "contentsCheck",
+                        "cond": [
+                            {
+                                "type": "itemCheck",
+                                "scene": "west",
+                                "itemLoc": "panel-1",
+                                "item": "tile-2"
+                            },
+                            {
+                                "type": "itemCheck",
+                                "scene": "west",
+                                "itemLoc": "panel-2",
+                                "item": "tile-1"
+                            },
+                            {
+                                "type": "itemCheck",
+                                "scene": "west",
+                                "itemLoc": "panel-3",
+                                "item": "tile-3"
+                            }
+                        ],
+                        "success": {
+                            "type": "sequence",
+                            "action1": {
+                                "type": "activateUsable",
+                                "scene": "east",
+                                "usable": "escape-rocket"
+                            },
+                            "action2": {
+                                "type": "animateUsable",
+                                "usable": "demo-lever",
+                                "duration": 1000,
+                                "animCycle": [
+                                    {
+                                        "type": "animCycle",
+                                        "img": "lever-left1",
+                                        "duration": 100
+                                    },
+                                    {
+                                        "type": "animCycle",
+                                        "img": "lever-left2",
+                                        "duration": 100
+                                    }
+                                ]
+                            }
+                        },
+                        "fail": {
+                            "type": "animateUsable",
+                            "usable": "demo-lever",
+                            "duration": 4000,
+                            "animCycle": [
+                                {
+                                    "type": "animCycle",
+                                    "img": "lever-left1",
+                                    "duration": 500
+                                },
+                                {
+                                    "type": "animCycle",
+                                    "img": "lever-left2",
+                                    "duration": 500
+                                }
+                            ]
+                        }
+                    },
+                    "usePoint": {
+                        "type": "pos",
+                        "x": 250,
+                        "y": 350
+                    },
+                    "img": "lever-left",
+                    "cursor": "pointer",
+                    "active": true
+                },
+                "east-exit": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 100,
+                        "h": 300,
+                        "x": 1250,
+                        "y": 150
+                    },
+                    "event": {
+                        "type": "leave",
+                        "scene": "east",
+                        "spawn": 0
+                    },
+                    "usePoint": {
+                        "type": "pos",
+                        "x": 1275,
+                        "y": 400
+                    },
+                    "img": null,
+                    "cursor": "e-resize",
+                    "active": true
+                },
+                "west-exit": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 100,
+                        "h": 300,
+                        "x": 0,
+                        "y": 80
+                    },
+                    "event": {
+                        "type": "leave",
+                        "scene": "west",
+                        "spawn": 0
+                    },
+                    "usePoint": {
+                        "type": "pos",
+                        "x": 50,
+                        "y": 330
+                    },
+                    "img": null,
+                    "cursor": "w-resize",
+                    "active": true
+                }
+            }
+        },
+        "victory": {
+            "type": "scene",
+            "img": "victory",
+            "fields": [],
+            "entrances": [],
+            "itemLocs": {},
+            "usables": {
+                "to-menu": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 400,
+                        "h": 300,
+                        "x": 200,
+                        "y": 200
+                    },
+                    "event": {
+                        "type": "returnToMenu"
+                    },
+                    "usePoint": null,
+                    "img": null,
+                    "cursor": "pointer",
+                    "active": true
+                }
+            }
+        },
+        "west": {
+            "type": "scene",
+            "img": "bg3",
+            "fields": [
+                {
+                    "type": "playfield",
+                    "w": 1000,
+                    "h": 200,
+                    "x": 200,
+                    "y": 350
+                },
+                {
+                    "type": "playfield",
+                    "w": 100,
+                    "h": 140,
+                    "x": 590,
+                    "y": 150
+                },
+                {
+                    "type": "playfield",
+                    "w": 100,
+                    "h": 140,
+                    "x": 873,
+                    "y": 150
+                }
+            ],
+            "entrances": [
+                {
+                    "type": "pos",
+                    "x": 1150,
+                    "y": 450
+                }
+            ],
+            "itemLocs": {
+                "panel-1": {
+                    "type": "itemLocation",
+                    "field": {
+                        "type": "playfield",
+                        "w": 100,
+                        "h": 140,
+                        "x": 294,
+                        "y": 150
+                    },
+                    "contents": {
+                        "type": "item",
+                        "w": 100,
+                        "h": 140,
+                        "img": "tile-1",
+                        "name": "tile-1"
+                    },
+                    "collectPoint": {
+                        "type": "pos",
+                        "x": 350,
+                        "y": 380
+                    }
+                },
+                "panel-2": {
+                    "type": "itemLocation",
+                    "field": {
+                        "type": "playfield",
+                        "w": 100,
+                        "h": 140,
+                        "x": 590,
+                        "y": 150
+                    },
+                    "contents": {
+                        "type": "item",
+                        "w": 100,
+                        "h": 140,
+                        "img": "tile-2",
+                        "name": "tile-2"
+                    },
+                    "collectPoint": {
+                        "type": "pos",
+                        "x": 640,
+                        "y": 380
+                    }
+                },
+                "panel-3": {
+                    "type": "itemLocation",
+                    "field": {
+                        "type": "playfield",
+                        "w": 100,
+                        "h": 140,
+                        "x": 873,
+                        "y": 150
+                    },
+                    "contents": {
+                        "type": "item",
+                        "w": 100,
+                        "h": 140,
+                        "img": "tile-3",
+                        "name": "tile-3"
+                    },
+                    "collectPoint": {
+                        "type": "pos",
+                        "x": 900,
+                        "y": 380
+                    }
+                }
+            },
+            "usables": {
+                "east-exit": {
+                    "type": "usable",
+                    "field": {
+                        "type": "playfield",
+                        "w": 100,
+                        "h": 250,
+                        "x": 1200,
+                        "y": 200
+                    },
+                    "event": {
+                        "type": "leave",
+                        "scene": "middle",
+                        "spawn": 1
+                    },
+                    "usePoint": {
+                        "type": "pos",
+                        "x": 1150,
+                        "y": 450
+                    },
+                    "img": null,
+                    "cursor": "e-resize",
+                    "active": true
+                }
+            }
+        }
+    }
+}
+
+  
