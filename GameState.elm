@@ -28,6 +28,10 @@ branch5 cons name (name1, t1) (name2, t2) (name3, t3) (name4, t4) (name5, t5) = 
 branch6 : (a -> a1 -> a2 -> a3 -> a4 -> a5 -> value) -> String -> ( String, Decoder a ) -> ( String, Decoder a1 ) -> ( String, Decoder a2 ) -> ( String, Decoder a3 ) -> ( String, Decoder a4 ) -> ( String, Decoder a5 ) -> Decoder value
 branch6 cons name (name1, t1) (name2, t2) (name3, t3) (name4, t4) (name5, t5) (name6, t6) = withType name <| map6 cons (field name1 t1) (field name2 t2) (field name3 t3) (field name4 t4) (field name5 t5) (field name6 t6)
 
+-- branch0DE cons name = (withType name <| succeed cons, objectE name []) -- Consistency...
+-- branch1DE cons name (name1, d1, e1, a1)  = (withType name <| map cons (field name1 d1), \v -> objectE name [(name1, e1 (a1 v))])
+
+
 --
 -- Encoder helpers
 --
@@ -90,7 +94,7 @@ character = withType "character" <| map8 Character (field "w" float) (field "h" 
 characterE : Character -> E.Value
 characterE c = objectE "character" [ ("w", E.float c.width), ("h", E.float c.height), ("pos", posE c.pos)
                                    , ("speed", E.float c.speed), ("facing", facingE c.facing), ("walkCycle", animCycleE c.walkCycle)
-                                   , ("inventory", E.list <| List.map itemE c.inventory) ]
+                                   , ("inventory", listE itemE c.inventory) ]
 
 type alias Item = { width : Float
                   , height : Float

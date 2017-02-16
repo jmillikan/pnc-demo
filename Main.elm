@@ -289,7 +289,7 @@ walk char delta =
 -- Diverges if: a.segments is empty, any segment time is 0 or negative, ???              
 advanceAnim : InAnimation -> Time -> InAnimation
 advanceAnim a delta =
-    case Debug.log "current" a.current of
+    case a.current of
         [] -> advanceAnim (InAnimation a.segments a.segments) delta
         (pose, remaining) :: rest ->
             if remaining > delta
