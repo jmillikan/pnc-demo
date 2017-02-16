@@ -1,6 +1,6 @@
 import AnimationFrame exposing (diffs)
 import Char exposing (toCode)
-import DemoLevel exposing (demoState)
+--import DemoLevel exposing (demoState)
 import Dict exposing (Dict, fromList, toList, get, values)
 import GameState exposing (..)
 import Html exposing (Html, button, div, img, text)
@@ -12,6 +12,7 @@ import Maybe exposing (withDefault)
 import Result exposing (Result, andThen)
 import Time exposing (Time, millisecond)
 import Tuple exposing (first, second)
+import Http
 
 main : Program Never GameState Msg
 main = Html.program { init = (Menu, Cmd.none), view = view, update = update, subscriptions = subscriptions }
@@ -36,6 +37,7 @@ type Msg = Tick Time
          | ItemLocationClick String Pos
          | UsableClick String Pos
          | Key KeyCode
+         | LoadWorld (Result Http.Error World)
 
 -- Non-essential stuff for debugging and fudging level elements
 addClick : Pos -> World -> World
@@ -63,7 +65,10 @@ update : Msg -> GameState -> ( GameState, Cmd Msg )
 update msg state =
     case state of
         Menu -> case msg of -- Click anywhere to start game...
-                StrayClick _ -> (Interact demoState, Cmd.none)
+                StrayClick _ -> (Menu, Http.send LoadWorld <| Http.get "world.json" world)
+                LoadWorld w -> case w of
+                                   Ok w -> (Interact w, Cmd.none)
+                                   Err e -> Debug.log "Error loading world" e |> always (Menu, Cmd.none)
                 _ -> (state, Cmd.none)
         Interact world -> (updateWorld msg world, Cmd.none)
         -- During cut scenes, all interactions get lost
@@ -109,6 +114,7 @@ updateWorld msg modelIn =
 updateWithScene : Msg -> Character -> Scene -> Result String (Character, Maybe Action)
 updateWithScene msg char scene =
     case msg of
+        LoadWorld _ -> Err "Can only load world from menu for now"
         Key _ -> Err "Key shoudldn't be here (TODO)"
         Tick delta -> Ok <| walk char delta
         FloorClick pos -> planWalk char scene None pos
