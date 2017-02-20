@@ -1,7 +1,6 @@
 import AnimationFrame exposing (diffs)
 import Char exposing (toCode)
 import Dict exposing (Dict, fromList, toList, get, values)
-import GameState exposing (..)
 import Html exposing (Html, button, div, img, text)
 import Html.Attributes exposing (style, src)
 import Html.Events exposing (onClick, onWithOptions, Options)
@@ -12,6 +11,12 @@ import Result exposing (Result, andThen)
 import Time exposing (Time, millisecond)
 import Tuple exposing (first, second)
 import Http
+
+import GameState exposing (..)
+import DebugEdit exposing (..)
+import Expect exposing (..)
+
+-- Main: The majority of the runtime bits of the game, except for World and contents which are in GameState
 
 main : Program Never GameState Msg
 main = Html.program { init = (Menu, Cmd.none), view = view, update = update, subscriptions = subscriptions }
@@ -45,13 +50,6 @@ collectClicks msg modelIn =
         UsableClick _ pos -> addClick pos modelIn
         _ -> modelIn
 
-debugField : World -> String             
-debugField model =
-    case model.clickData of
-        p2 :: p1 :: _ -> "Pos 1: " ++ toString p1 ++ "; Pos 2: " ++ toString p2 ++ "; Field: " ++
-                         toString (Playfield (p2.x - p1.x) (p2.y - p1.y) p1.x p1.y)
-        _ -> "No dice"
-
 update : Msg -> GameState -> ( GameState, Cmd Msg )
 update msg state =
     case state of
@@ -71,8 +69,9 @@ update msg state =
                         -- Errors in animations will probably not resolve at runtime.
                         Err err -> Debug.log "Error" err |> always (state, Cmd.none)
                        
-                _ -> (state, Cmd.none)
+                _ -> (state, Cmd.none)                     
 
+-- Due to not having nested Msg yet, this all is wrong-shaped                     
 updateWorld : Msg -> World -> GameState
 updateWorld msg modelIn =
     let model = collectClicks msg modelIn in -- Fungible. For debugging.
@@ -80,11 +79,13 @@ updateWorld msg modelIn =
     case msg of
         Key p -> if p == toCode 'd'
                   then Ok <| Interact { model | debug = not model.debug }
-                  else if p == toCode 'f'
-                       then Ok <| Debug.log (debugField model) (Interact model)
-                       else Err "Unknown keystroke"
+                  else -- Disable keys while not debugging for minimum surprise...
+                      if not model.debug
+                      then Err "Not in debug mode, no keys accepted"
+                      else doDebugKeys p model                         
+                                       
         _ -> expectIn model.scenes model.currentScene
-                |> andThen (\scene -> updateWithScene msg model.character scene) 
+                |> andThen (\scene -> updateChar msg model.character scene) 
                 |> Result.map (\(newChar, act) -> ({ model | character = newChar }, act))
                 |> Result.map (\(newModel, act) -> maybe
                                 (Interact newModel)
@@ -102,8 +103,8 @@ updateWorld msg modelIn =
 -- c) Character walks a little bit
 -- So this is limited to the character and scene for now, and actions happen outside.
 -- In fact Action could subsume character movement and this would get a lot cleaner.
-updateWithScene : Msg -> Character -> Scene -> Result String (Character, Maybe Action)
-updateWithScene msg char scene =
+updateChar : Msg -> Character -> Scene -> Result String (Character, Maybe Action)
+updateChar msg char scene =
     case msg of
         LoadWorld _ -> Err "Can only load world from menu for now"
         Key _ -> Err "Key shoudldn't be here (TODO)"
@@ -130,24 +131,6 @@ planWalk char scene action pos =
 -- MAYBE AND RESULT UTILS           
 maybe : b -> (a -> b) -> Maybe a -> b
 maybe def f m = withDefault def (Maybe.map f m)
-
-                -- expectAt and expectIn are different ways round. It's bad.
--- Should just toss the lists and use Dict, but I have too much brain load right now                           
-expectAt : (a -> Bool) -> List a -> Result String a
-expectAt f l = Result.fromMaybe ("Expected to find item in " ++ toString l)
-                <| List.head <| List.filter f l
-
--- Start clearing out the Maybe thicket...             
-expectIn : Dict comparable v -> comparable -> Result String v
-expectIn dict k = Result.fromMaybe ("Missing expected value for key " ++ toString k)
-                  <| get k dict
-
-                      -- Update by explicitly failing instead of silently failing
-expectUpdate : comparable -> Dict comparable a -> (a -> Result String a) -> Result String (Dict comparable a)
-expectUpdate key dict f =
-    expectIn dict key
-        |> andThen f
-        |> Result.map (\v -> Dict.insert key v dict)
 
 doAction : World -> Action -> Result String GameState
 doAction model action =
@@ -499,21 +482,3 @@ face c = case c.facing of
              Left -> "left"
              Right -> "right"
 
-viewDebugPos : String -> Pos -> Html Msg
-viewDebugPos c p = div
-                  [ style [ ("position", "absolute")
-                          , ("top", toString p.y ++ "px") -- fudge fudge
-                          , ("left", toString p.x ++ "px")
-                          , ("border", "solid red")
-                          , ("border-width", "2px 0px 0px 2px")
-                          ] ]
-                  [ text c ]
-             
-viewDebugField : String -> Playfield -> Html Msg             
-viewDebugField color f = div [ style [ ("background-color", color)
-                               , ("height", toString f.height ++ "px")
-                               , ("width", toString f.width ++ "px")
-                               , ("position", "absolute")
-                               , ("top", toString f.y ++ "px")
-                               , ("left", toString f.x ++ "px")
-                               ] ] [ text "field" ]

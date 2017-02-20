@@ -6,6 +6,8 @@ import Time exposing (Time)
 import Json.Decode as D exposing (..)
 import Json.Encode as E
 
+-- GameState: State of game including World, plus World encoder/decoder for loading/saving
+
 -- Quick and dirty object decoders with explicit type and predictable encoders
 -- There's similar stuff in Json.Helpers that I should probably be using
 
