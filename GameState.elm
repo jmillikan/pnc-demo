@@ -229,10 +229,6 @@ playfieldE pf = objectE "playfield" [("w", E.float pf.width), ("h", E.float pf.h
 type CharState = Still
                | MovingTo (List Pos) InAnimation Action
 
-type GameState = Menu
-               | Interact World -- We're playing
-               | Animate GameAnimation World
-
 -- Very simple animation system
 -- Or it was supposed to be...
 type alias InAnimation = { segments : AnimCycle

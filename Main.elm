@@ -21,6 +21,11 @@ import Expect exposing (..)
 main : Program Never GameState Msg
 main = Html.program { init = (Menu, Cmd.none), view = view, update = update, subscriptions = subscriptions }
 
+type GameState = Menu
+               | Interact World -- We're playing
+               | Animate GameAnimation World
+               | DebugGame DebugCmd World
+
 subscriptions : GameState -> Sub Msg
 subscriptions model = Sub.batch [ presses Key
                                 , diffs Tick
@@ -34,6 +39,7 @@ type Msg = Tick Time
          | UsableClick String Pos
          | Key KeyCode
          | LoadWorld (Result Http.Error World)
+         | DebugMsg DebugMsg
 
 -- Non-essential stuff for debugging and fudging level elements
 addClick : Pos -> World -> World
@@ -60,6 +66,14 @@ update msg state =
                                    Err e -> Debug.log "Error loading world" e |> always (Menu, Cmd.none)
                 _ -> (state, Cmd.none)
         Interact world -> (updateWorld msg world, Cmd.none)
+        -- Stay in the debugging/editing command until it is done, passing back a new world
+        DebugGame debugCmd w ->
+            case msg of
+                DebugMsg debugMsg ->
+                    case debugUpdate debugCmd debugMsg w of
+                        Ok newWorld -> (Interact newWorld, Cmd.none)
+                        Err keepDebugging -> (DebugGame keepDebugging w, Cmd.none)
+                _ -> (DebugGame debugCmd w, Cmd.none)
         -- During cut scenes, all interactions get lost
         Animate cutScene world ->
             case msg of
@@ -82,7 +96,9 @@ updateWorld msg modelIn =
                   else -- Disable keys while not debugging for minimum surprise...
                       if not model.debug
                       then Err "Not in debug mode, no keys accepted"
-                      else doDebugKeys p model                         
+                      else if p == toCode 's'
+                          then Ok <| DebugGame (AddingScene "") model
+                           else doDebugKeys p model |> Result.map Interact
                                        
         _ -> expectIn model.scenes model.currentScene
                 |> andThen (\scene -> updateChar msg model.character scene) 
@@ -119,6 +135,7 @@ updateChar msg char scene =
                                             Just p -> planWalk char scene usable.event p
                                             Nothing -> Ok <| (char, Just usable.event))
         StrayClick _ -> Err "Can't do anything with a stray click. (This is okay.)"
+        DebugMsg _ -> Err "Can't handle debugger messages in interact"
 
 planWalk : Character -> Scene -> Action -> Pos -> Result String (Character, Maybe a)
 planWalk char scene action pos =
@@ -354,6 +371,10 @@ view state =
         Menu -> viewMenu
         Interact world -> viewWorld world
         Animate cutScene world -> viewWorld world
+        DebugGame debugCmd world ->
+            div [] [ viewWorld world
+                   , Html.map DebugMsg (debugView debugCmd)
+                   ]
 
 viewMenu : Html Msg
 viewMenu = div [ style [ ("background-image", "url(img/menu.png)")
