@@ -98,7 +98,11 @@ updateWorld msg modelIn =
                       then Err "Not in debug mode, no keys accepted"
                       else if p == toCode 's'
                           then Ok <| DebugGame (AddingScene "") model
-                           else doDebugKeys p model |> Result.map Interact
+                           else if p == toCode 'g'
+                               then Ok <| DebugGame (ChangingScene "") model
+                                else if p == toCode 'e'
+                                     then Ok <| DebugGame (AddingExit "" "" "") model
+                                     else doDebugKeys p model |> Result.map Interact
                                        
         _ -> expectIn model.scenes model.currentScene
                 |> andThen (\scene -> updateChar msg model.character scene) 
@@ -419,6 +423,7 @@ renderScene scene char debug =
                     (List.map (viewDebugField "blue") scene.playfields)
                     ++ (List.map (viewDebugPos "i" << .collectPoint) (values scene.itemLocations))
                     ++ (List.map (viewDebugPos "u") (List.filterMap .usePoint <| values usables))
+                    ++ (List.map (viewDebugPos "e") scene.entrance)
                     ++ (List.map (viewDebugField "yellow" << .field) (values scene.itemLocations))
                     ++ (List.map (viewDebugField "orange" << .field) (values usables)) else [])
       , div [] (List.map viewItemLocation (values scene.itemLocations))
